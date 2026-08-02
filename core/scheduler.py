@@ -1,7 +1,7 @@
 # core/scheduler.py
 """
-任务调度器 - 修复版（P0 F1）
-确保 executor 接收命令字符串而非 Task 对象
+任务调度器 - 补丁 A
+修正执行器契约：传递命令字符串而非 Task 对象
 """
 
 import asyncio
@@ -174,28 +174,39 @@ class Scheduler:
                     self._pending.task_done()
 
     async def _execute_task(self, task: Task) -> None:
-        """执行任务：提取命令并调用 executor"""
+        """补丁 A：提取命令字符串，而不是传递整个 Task 对象"""
         # 从 action 中提取命令
-        cmd = task.action.get("command")
+        cmd = task.action.get("command") or task.action.get("cmd")
+        if not cmd and isinstance(task.action, str):
+            cmd = task.action
+        elif not cmd:
+            task.status = TaskStatus.FAILED
+            task.error = "No command in task action"
+            task.completed_at = time.time()
+            logger.error(f"Task {task.id} has no command")
+            self._active.pop(task.id, None)
+            if task.resource:
+                await self.resource_lock.release(task.resource, task.id)
+            return
+
+        # 确保是字符串
+        if not isinstance(cmd, str):
+            cmd = str(cmd)
+        cmd = cmd.strip()
         if not cmd:
-            # 兼容：如果 action 直接是字符串，或包含 'cmd' 字段
-            cmd = task.action.get("cmd")
-            if not cmd and isinstance(task.action, str):
-                cmd = task.action
-            elif not cmd:
-                task.status = TaskStatus.FAILED
-                task.error = "No command in task action"
-                task.completed_at = time.time()
-                logger.error(f"Task {task.id} has no command")
-                self._active.pop(task.id, None)
-                if task.resource:
-                    await self.resource_lock.release(task.resource, task.id)
-                return
+            task.status = TaskStatus.FAILED
+            task.error = "Empty command"
+            task.completed_at = time.time()
+            logger.error(f"Task {task.id} has empty command")
+            self._active.pop(task.id, None)
+            if task.resource:
+                await self.resource_lock.release(task.resource, task.id)
+            return
 
         timeout = task.action.get("timeout", 5.0)
 
         try:
-            # 调用 executor 传入命令和超时
+            # 调用 executor 传入命令字符串和超时
             result = await self.executor(cmd, timeout=timeout)
             task.status = TaskStatus.SUCCESS
             task.result = result

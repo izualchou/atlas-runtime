@@ -1,7 +1,7 @@
 # storage/driver.py
 """
-单写者队列 SQLite 驱动 - 修复版（P0 F2）
-返回值语义明确：INSERT→lastrowid, UPDATE/DELETE→rowcount
+单写者队列 SQLite 驱动 - 补丁 B
+写操作返回值按 SQL 类型区分：INSERT→lastrowid, UPDATE/DELETE→rowcount
 """
 
 import os
@@ -179,18 +179,17 @@ class SingleWriterStorage:
                     mode, sql, params_arg, future = item
                     if mode == "write":
                         cursor = conn.execute(sql, params_arg)
-                        # 根据 SQL 类型决定返回 lastrowid 或 rowcount
+                        # 补丁 B：根据 SQL 类型返回适当的值
                         sql_upper = sql.strip().upper()
                         if sql_upper.startswith("INSERT"):
                             results.append(cursor.lastrowid)
                         elif sql_upper.startswith(("UPDATE", "DELETE", "REPLACE")):
                             results.append(cursor.rowcount)
                         else:
-                            # 其他语句（PRAGMA, BEGIN等）返回 True
+                            # PRAGMA, BEGIN, COMMIT 等返回 True
                             results.append(True)
                     elif mode == "many":
                         cursor = conn.executemany(sql, params_arg)
-                        # executemany 返回 rowcount
                         results.append(cursor.rowcount)
                     else:
                         raise ValueError(f"Unknown mode: {mode}")
