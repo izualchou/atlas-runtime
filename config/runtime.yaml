@@ -1,0 +1,22 @@
+runtime:
+  log_level: INFO
+  snapshot_interval: 30
+  command_timeout: 5
+  circuit_breaker_threshold: 5
+  dedup_ttl: 60
+
+storage:
+  db_path: /data/data/com.termux/files/home/atlas-runtime/data/atlas.db
+  busy_timeout: 5000
+
+memory:
+  soft_limit_mb: 150
+  hard_limit_mb: 200
+
+transport:
+  fifo_path: /data/data/com.termux/files/usr/tmp/atlas_trigger.fifo
+  http_port: 8787
+
+executors:
+  shell_timeout: 5
+  ui_timeout: 5

@@ -1,0 +1,18 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# ============================================================
+# Atlas Runtime 服务启动脚本 (runit)
+# ============================================================
+
+if [ -f /data/data/com.termux/files/usr/etc/profile ]; then
+    . /data/data/com.termux/files/usr/etc/profile
+fi
+
+termux-wake-unlock >/dev/null 2>&1 || true
+termux-wake-lock
+
+trap 'termux-wake-unlock >/dev/null 2>&1; exit 0' EXIT TERM INT
+
+export ATLAS_HOME=$HOME/atlas-runtime
+
+exec 2>&1
+exec python3 "$ATLAS_HOME/runtime/app.py" --config "$ATLAS_HOME/config/runtime.yaml"
