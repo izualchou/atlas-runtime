@@ -4,10 +4,15 @@ runtime:
   command_timeout: 5
   circuit_breaker_threshold: 5
   dedup_ttl: 60
+  max_pending: 5000
 
 storage:
   db_path: /data/data/com.termux/files/home/atlas-runtime/data/atlas.db
   busy_timeout: 5000
+  snapshot_dir: data/snapshots
+  max_events: 10000
+  rotate_interval_hours: 6
+  battery_check_interval: 30
 
 memory:
   soft_limit_mb: 150
