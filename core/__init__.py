@@ -1,4 +1,4 @@
-# core/__init__.py
+# core/__init__.py（更新）
 from .state_manager import StateManager
 from .scheduler import Scheduler
 from .resource_lock import ResourceLock

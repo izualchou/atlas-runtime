@@ -28,7 +28,7 @@ class StateManager:
 
         self._running = False
         self._snapshot_task: Optional[asyncio.Task] = None
-        self._pending_write_task: Optional[asyncio.Task] = None   # 跟踪当前写任务
+        self._pending_write_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         if self._running:
@@ -59,7 +59,6 @@ class StateManager:
                         "data": copy.deepcopy(self._data),
                         "versions": copy.deepcopy(self._versions),
                     }
-                # 等待写任务完成，避免堆积
                 self._pending_write_task = asyncio.create_task(self._snapshot_mgr.write(frozen))
                 await self._pending_write_task
             except asyncio.CancelledError:
@@ -107,11 +106,9 @@ class StateManager:
             except asyncio.CancelledError:
                 pass
 
-        # 等待最后的写入完成
         if self._pending_write_task and not self._pending_write_task.done():
             await self._pending_write_task
 
-        # 最后一次持久化
         async with self._lock:
             frozen = {
                 "data": copy.deepcopy(self._data),

@@ -47,7 +47,6 @@ class TriggerHandler:
 
     async def _write_dead_letter(self, data: Dict[str, Any], error: str) -> None:
         try:
-            # 序列化，对不可序列化的对象使用 str 兜底
             packed = msgpack.packb(data, default=str, use_bin_type=True)
             await self.storage.execute_write(
                 "INSERT INTO dead_letters (task_data, error) VALUES (?, ?)",
