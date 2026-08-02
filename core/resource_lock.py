@@ -100,3 +100,14 @@ class ResourceLock:
             "SELECT resource, owner, expires_at FROM resource_locks"
         )
         return {row[0]: {"owner": row[1], "expires_at": row[2]} for row in rows}
+
+    async def stop(self) -> None:
+        """
+        生命周期：停止资源锁服务。
+
+        ResourceLock 自身不持有持久资源（storage 由外部管理），
+        但提供 stop() 方法以满足 Bootstrap 的组件生命周期协议。
+        在终止前清理所有属于自身的过期锁。
+        """
+        await self.clean_expired()
+        logger.info("ResourceLock stopped (all expired locks cleaned)")

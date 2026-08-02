@@ -1,14 +1,13 @@
 """
-Unit tests for storage.battery_aware — BatteryAwareCheckpoint.
+Unit tests for storage.battery_aware — BatteryAwareCheckpoint (v9.0).
 
-Actual API:
-  BatteryAwareCheckpoint(storage, check_interval_seconds=30,
-                         charging_autocheckpoint=1000, battery_autocheckpoint=10000,
-                         charging_batch_delay_ms=50, battery_batch_delay_ms=200)
+Updated API (Samsung One UI 8.5):
+  BatteryAwareCheckpoint(storage, check_interval_seconds=15, ...)
   - start() / stop()
   - set_health_checker(checker)
-  - _get_charging_status() -> bool  (returns True by default = conservative)
-  - _apply_policy(is_charging)
+  - update_health(battery_level, is_charging, temperature)
+  - _get_charging_status() -> bool  (from health_checker.get_status())
+  - _apply_policy(mode)  # mode: CHARGING/BATTERY_OK/BATTERY_LOW/CRITICAL/OVERHEAT
 """
 
 import asyncio
@@ -72,10 +71,22 @@ class TestChargingStatus:
 
     @pytest.mark.asyncio
     async def test_with_health_checker(self, battery):
-        """With a health_checker that reports battery."""
+        """
+        With a health_checker that reports battery via get_status().
+        v9.0 API: health_checker.get_status() -> SystemHealth with .battery.charging
+        """
+        # Define classes outside FakeHealth to avoid nested scoping issues
+        class FakeBattery:
+            charging = False
+
+        class FakeStatus:
+            battery = FakeBattery()
+
         class FakeHealth:
-            async def get_charging_status(self):
-                return False  # not charging
+            @staticmethod
+            async def get_status():
+                return FakeStatus()
+
         battery.set_health_checker(FakeHealth())
         status = await battery._get_charging_status()
         assert status is False
@@ -84,8 +95,9 @@ class TestChargingStatus:
     async def test_health_checker_error_fallback(self, battery):
         """If health_checker throws, falls back to True."""
         class BadHealth:
-            async def get_charging_status(self):
+            async def get_status(self):
                 raise RuntimeError("no battery info")
+
         battery.set_health_checker(BadHealth())
         status = await battery._get_charging_status()
         assert status is True
@@ -94,8 +106,9 @@ class TestChargingStatus:
     async def test_health_checker_none_result(self, battery):
         """If health_checker returns None, falls back to True."""
         class NoneHealth:
-            async def get_charging_status(self):
+            async def get_status(self):
                 return None
+
         battery.set_health_checker(NoneHealth())
         status = await battery._get_charging_status()
         assert status is True
@@ -105,10 +118,54 @@ class TestPolicyApplication:
 
     @pytest.mark.asyncio
     async def test_apply_charging_policy(self, battery, storage):
-        await battery._apply_policy(is_charging=True)
+        """v9.0: _apply_policy takes mode string, not is_charging bool."""
+        await battery._apply_policy("CHARGING")
         # Should not crash
 
     @pytest.mark.asyncio
     async def test_apply_battery_policy(self, battery, storage):
-        await battery._apply_policy(is_charging=False)
+        """v9.0: _apply_policy with BATTERY_OK mode."""
+        await battery._apply_policy("BATTERY_OK")
         # Should not crash
+
+    @pytest.mark.asyncio
+    async def test_apply_low_battery_policy(self, battery, storage):
+        """BATTERY_LOW mode should work."""
+        await battery._apply_policy("BATTERY_LOW")
+
+    @pytest.mark.asyncio
+    async def test_apply_critical_policy(self, battery, storage):
+        """CRITICAL mode should work."""
+        await battery._apply_policy("CRITICAL")
+
+
+class TestHealthUpdate:
+
+    @pytest.mark.asyncio
+    async def test_update_health_charging(self, battery, storage):
+        """update_health with charging status should set CHARGING mode."""
+        battery.update_health(battery_level=80, is_charging=True, temperature=30.0)
+        assert battery._current_is_charging is True
+        assert battery._current_battery_level == 80
+
+    @pytest.mark.asyncio
+    async def test_update_health_low_battery(self, battery, storage):
+        """update_health with low battery should set BATTERY_LOW mode."""
+        battery.update_health(battery_level=10, is_charging=False, temperature=30.0)
+        assert battery._current_battery_level == 10
+        assert battery._current_is_charging is False
+
+    @pytest.mark.asyncio
+    async def test_update_health_critical(self, battery, storage):
+        """Critical battery level should set CRITICAL mode."""
+        battery.update_health(battery_level=3, is_charging=False, temperature=30.0)
+        # Mode determination is private but should not crash
+        mode = battery._determine_mode()
+        assert mode == "CRITICAL"
+
+    @pytest.mark.asyncio
+    async def test_update_health_overheat(self, battery, storage):
+        """High temperature should result in OVERHEAT mode."""
+        battery.update_health(battery_level=80, is_charging=False, temperature=50.0)
+        mode = battery._determine_mode()
+        assert mode == "OVERHEAT"

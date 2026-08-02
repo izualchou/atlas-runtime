@@ -1,5 +1,41 @@
-aiosqlite~=0.19.0
-msgpack~=1.0.5
-pyyaml~=6.0
-psutil~=5.9.5
-aiohttp~=3.9.0
+# ============================================================================
+# Atlas Runtime v9.0 — Python 依赖
+# 目标平台: Samsung One UI 8.5 + Termux (arm64-v8a/aarch64)
+# ============================================================================
+#
+# 安装方式分两种：
+#   1. pkg install <pkg>   → 预编译包，无需编译，推荐
+#   2. pip install <pkg>   → 源码编译，在 Samsung Exynos 上可能较慢
+#
+# 建议安装顺序：
+#   pkg update && pkg upgrade
+#   pkg install python python-psutil
+#   pip install -r requirements.txt
+
+# ---- 核心依赖（必须） ----
+
+# 异步 SQLite（纯 Python，无需编译）
+aiosqlite>=0.20.0
+
+# 消息序列化
+msgpack>=1.0.0
+
+# YAML 配置解析（纯 Python，PyYAML 可能需编译，推荐安装 libyaml-dev 加速）
+pyyaml>=6.0
+
+# HTTP 服务器（aiohttp 需编译，Termux 中可能耗时 5-15 分钟）
+# 推荐先安装依赖: pkg install libffi libffi-dev openssl
+aiohttp>=3.9.0
+
+# ---- 可选依赖（enhanced features） ----
+
+# psutil（系统监控）
+# 推荐: pkg install python-psutil（预编译）
+# 替代: pip install psutil（需要编译+Android NDK headers）
+psutil>=5.9.0
+
+# ---- 开发/测试依赖（仅开发时安装） ----
+
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.0.0

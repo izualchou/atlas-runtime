@@ -1,18 +1,38 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # ============================================================
-# Atlas Runtime 服务启动脚本 (runit)
+# Atlas Runtime v9.0 — runit 服务启动脚本
+# 目标: Samsung One UI 8.5 + Termux
 # ============================================================
 
+# 加载 Termux 环境变量
 if [ -f /data/data/com.termux/files/usr/etc/profile ]; then
     . /data/data/com.termux/files/usr/etc/profile
 fi
 
+# ---- Samsung One UI 8.5 WakeLock ----
+# 三星设备在屏幕关闭后可能快速进入深度休眠
+# termux-wake-lock 可防止 CPU 挂起，确保持续运行
 termux-wake-unlock >/dev/null 2>&1 || true
-termux-wake-lock
+termux-wake-lock acquire-atlas
 
-trap 'termux-wake-unlock >/dev/null 2>&1; exit 0' EXIT TERM INT
+# 退出时释放 wakelock
+trap 'termux-wake-unlock acquire-atlas >/dev/null 2>&1; exit 0' EXIT TERM INT
 
-export ATLAS_HOME=$HOME/atlas-runtime
+# ---- 环境变量（Samsung 优化） ----
+export ATLAS_HOME="$HOME/atlas-runtime"
+export PYTHONUNBUFFERED=1
+# 确保 Android 系统命令在 PATH 中
+export PATH="/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin:$PATH"
 
+# ---- 切换到工作目录 ----
+cd "$ATLAS_HOME" || {
+    echo "[Atlas] ERROR: Cannot enter $ATLAS_HOME" >&2
+    exit 1
+}
+
+# ---- 确保数据目录存在 ----
+mkdir -p data/snapshots logs
+
+# ---- 启动 ----
 exec 2>&1
 exec python3 "$ATLAS_HOME/runtime/app.py" --config "$ATLAS_HOME/config/runtime.yaml"

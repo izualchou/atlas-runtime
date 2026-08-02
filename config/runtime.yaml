@@ -1,27 +1,88 @@
+# ============================================================================
+# atlas-runtime 运行时配置
+# 目标平台: Samsung One UI 8.5 + Termux (arm64-v8a/aarch64)
+# ============================================================================
+
 runtime:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
   log_level: INFO
+  # 快照持久化间隔（秒），在移动设备上建议 30-60 秒以减少 I/O
   snapshot_interval: 30
-  command_timeout: 5
+  # 命令执行超时（秒），移动设备上可能比桌面慢
+  command_timeout: 15
+  # 熔断器阈值：连续失败多少次后熔断
   circuit_breaker_threshold: 5
+  # 去重 TTL（秒）
   dedup_ttl: 60
-  max_pending: 5000
+  # 最大待处理任务数（背压阈值）
+  # 移动设备内存有限，建议较小值
+  max_pending: 500
 
 storage:
+  # 数据库路径（Termux 内，相对于 $HOME）
   db_path: /data/data/com.termux/files/home/atlas-runtime/data/atlas.db
+  # SQLite 忙等超时（毫秒）
   busy_timeout: 5000
+  # 快照目录
   snapshot_dir: data/snapshots
+  # 事件表最大行数（触发轮转）
   max_events: 10000
+  # 轮转检查间隔（小时）
   rotate_interval_hours: 6
-  battery_check_interval: 30
+  # 电池感知检查间隔（秒）
+  # Samsung 设备电池优化激进，建议更频繁检查
+  battery_check_interval: 15
 
 memory:
+  # 软内存限制（MB）- 到达后会在日志中告警
+  # Termux 进程通常限制在 ~200-400MB
   soft_limit_mb: 150
+  # 硬内存限制（MB）- 到达后将拒绝新任务
   hard_limit_mb: 200
 
 transport:
+  # FIFO 路径（Termux 内可写路径）
+  # 注意：/data/data/com.termux/files/usr/tmp 在 Termux 中始终可写
+  # /tmp 可能指向 /data/local/tmp，在 Samsung One UI 上可能不可写
   fifo_path: /data/data/com.termux/files/usr/tmp/atlas_trigger.fifo
+  # HTTP 触发端口（低于 1024 的端口在 Termux 非 root 下不可用）
   http_port: 8787
 
 executors:
-  shell_timeout: 5
-  ui_timeout: 5
+  # Shell 执行超时（秒）
+  shell_timeout: 15
+  # UI 自动化超时（秒）
+  # Samsung One UI 的 uiautomator dump 可能需要更长时间
+  ui_timeout: 15
+
+# ============================================================================
+# 平台适配配置（Samsung One UI 8.5 特定）
+# ============================================================================
+platform:
+  # 健康检查间隔（秒）
+  health_check_interval: 30
+  # 低电量阈值（百分比，低于此值暂停非关键任务）
+  low_battery_threshold: 15
+  # 严重低电量阈值（百分比，低于此值暂停所有任务）
+  critical_battery_threshold: 5
+  # 高温阈值（摄氏度）
+  high_temp_threshold: 45.0
+  # 高内存使用率阈值（百分比）
+  high_memory_threshold: 85.0
+  # Samsung 设备：是否使用 termux-api 进行硬件访问（推荐）
+  prefer_termux_api: true
+
+# ============================================================================
+# Samsung 特定：service call 事务码
+# 这些事务码可能因 One UI 版本和设备型号而异
+# 如果命令失败，系统会自动回退到 AOSP 标准事务码或 settings 命令
+# ============================================================================
+samsung_service_codes:
+  wifi_enable:    55   # 可能值：55 (One UI 8.x), 28 (AOSP)
+  wifi_disable:   55
+  data_enable:    77   # 可能值：77 (One UI 8.x), 53 (AOSP)
+  data_disable:   77
+  airplane_on:    98   # 可能值：98 (One UI 8.x), 59 (AOSP)
+  airplane_off:   98
+  sim1_enable:    126  # 可能值：126 (One UI 8.x), 86 (AOSP)
+  sim1_disable:   126
