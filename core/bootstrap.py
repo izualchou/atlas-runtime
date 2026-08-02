@@ -30,7 +30,7 @@ class Bootstrap:
         self._component_order.append('storage')
         logger.info("Storage initialized")
 
-        # 2. SnapshotManager
+        # 2. SnapshotManager — 无状态、无 stop() 方法，不加入 _component_order
         from storage.snapshot import SnapshotManager
         snapshot = SnapshotManager(
             snapshot_dir=self.config['storage'].get('snapshot_dir', 'data/snapshots')
@@ -56,7 +56,7 @@ class Bootstrap:
         self._component_order.append('resource_lock')
         logger.info("ResourceLock initialized")
 
-        # 5. ShellExecutor
+        # 5. ShellExecutor — 无状态、无 stop() 方法，不加入 _component_order
         from executors.shell_executor import SafeShellExecutor
         executor = SafeShellExecutor(
             default_timeout=self.config['executors']['shell_timeout']
@@ -75,7 +75,7 @@ class Bootstrap:
         self._component_order.append('scheduler')
         logger.info("Scheduler started")
 
-        # 7. TriggerHandler
+        # 7. TriggerHandler — 无持久状态、无 stop() 方法，不加入 _component_order
         from core.trigger_handler import TriggerHandler
         trigger_handler = TriggerHandler(scheduler, storage)
         self.components['trigger_handler'] = trigger_handler
@@ -120,5 +120,9 @@ class Bootstrap:
         return self.components.get(name)
 
     def get_all_components(self) -> List[Any]:
-        """按启动顺序返回所有组件，用于关机倒序停止"""
+        """按启动顺序返回需要有序关闭的组件（用于关机时倒序停止）。
+        
+        注意：executor、snapshot、trigger_handler 不在此列表中，
+        因为它们无持久状态且无 stop() 方法，不需要显式关闭。
+        """
         return [self.components[name] for name in self._component_order if name in self.components]

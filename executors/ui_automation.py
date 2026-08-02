@@ -1,4 +1,3 @@
-cat > executors/ui_automation.py << 'EOF'
 # executors/ui_automation.py
 """
 UI 自动化执行器
@@ -86,4 +85,3 @@ class UIAutomationExecutor:
             "stderr": stderr,
             "returncode": returncode,
         }
-EOF

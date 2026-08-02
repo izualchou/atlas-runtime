@@ -1,4 +1,3 @@
-cat > executors/shell_executor.py << 'EOF'
 # executors/shell_executor.py
 """
 安全 Shell 执行器
@@ -56,4 +55,3 @@ class SafeShellExecutor:
             if proc.stderr:
                 proc.stderr.close()
             return -1, "", str(e)
-EOF

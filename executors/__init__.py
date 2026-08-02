@@ -1,5 +1,3 @@
-mkdir -p executors
-cat > executors/__init__.py << 'EOF'
 # executors/__init__.py
 """
 执行器模块
@@ -15,4 +13,3 @@ __all__ = [
     "UIAutomationExecutor",
     "HighPrivilegeExecutor",
 ]
-EOF

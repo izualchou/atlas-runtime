@@ -53,14 +53,27 @@ class AtlasApp:
         self._services = self.bootstrap.get_all_components()
 
         loop = asyncio.get_running_loop()
+        self._loop = loop
+
+        # 信号处理器：优先使用 add_signal_handler（线程安全），回退到 signal.signal
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
             except NotImplementedError:
-                signal.signal(sig, lambda s, f: asyncio.create_task(self.stop()))
+                # 回退方案：注意 signal.signal 回调在信号上下文中运行，
+                # 不能直接调用 asyncio.create_task。改用 loop.call_soon_threadsafe
+                # 或设置标志位让主循环轮询。
+                logger.warning(
+                    f"add_signal_handler not available for signal {sig.name}, "
+                    f"using polling-based fallback"
+                )
+                signal.signal(sig, lambda s, f: self._shutdown_event.set())
 
         logger.info("Atlas Runtime is running. Press Ctrl+C to stop.")
         await self._shutdown_event.wait()
+        # 如果通过 signal.signal 回退设置了事件，需要显式调用 stop
+        if self._is_stopping is False:
+            await self.stop()
 
     async def stop(self) -> None:
         if self._is_stopping:

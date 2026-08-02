@@ -227,7 +227,17 @@ class Scheduler:
         finally:
             self._active.pop(task.id, None)
             if self.on_task_complete:
-                asyncio.create_task(self.on_task_complete(task))
+                # 使用 fire-and-forget + 异常保护，确保回调异常不会丢失
+                asyncio.create_task(
+                    self._safe_on_task_complete(task)
+                )
+
+    async def _safe_on_task_complete(self, task: Task) -> None:
+        """安全地调用 on_task_complete 回调，捕获并记录异常。"""
+        try:
+            await self.on_task_complete(task)
+        except Exception as e:
+            logger.error(f"on_task_complete callback failed for task {task.id}: {e}", exc_info=True)
 
     async def _release_lock_and_retry(self, task: Task) -> None:
         if task.resource:

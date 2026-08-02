@@ -11,6 +11,12 @@ import msgpack
 from typing import Dict, Any
 from storage.driver import StorageFullError
 
+# 仅用于类型注解，避免循环导入
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from core.scheduler import Scheduler
+    from storage.driver import AsyncSQLiteStorage
+
 logger = logging.getLogger("Atlas.TriggerHandler")
 
 
@@ -20,7 +26,12 @@ class BackpressureError(Exception):
 
 
 class TriggerHandler:
-    def __init__(self, scheduler, storage, max_retries: int = 3):
+    def __init__(
+        self,
+        scheduler: "Scheduler",
+        storage: "AsyncSQLiteStorage",
+        max_retries: int = 3,
+    ) -> None:
         self.scheduler = scheduler
         self.storage = storage
         self.max_retries = max_retries

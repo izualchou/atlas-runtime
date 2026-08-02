@@ -1,4 +1,3 @@
-cat > executors/high_privilege.py << 'EOF'
 # executors/high_privilege.py
 """
 高权限操作执行器
@@ -20,25 +19,29 @@ class HighPrivilegeExecutor:
 
     async def switch_sim(self, sim_id: int, timeout: float = 5.0) -> Dict[str, Any]:
         """
-        切换 SIM 卡 (适用于支持双卡的设备)
-        sim_id: 0 或 1 (取决于设备)
+        切换默认数据 SIM 卡（适用于支持双卡的设备）。
+        sim_id: 0 或 1（取决于设备，0=卡1, 1=卡2）。
+
+        警告：SIM 切换在不同 OEM（小米/华为/三星等）和 Android 版本间
+        差异极大，service call 方法并非通用。部署前需在目标设备上验证。
         """
-        # 注意：具体命令因 Android 版本和 OEM 而异，这里给出通用方式
-        # 有些设备使用 service call phone 或 settings 命令
-        # 此处提供两种常见尝试，成功即返回
+        # 方法 1: service call phone（适用于 AOSP / Pixel / 部分设备）
         cmd = f"service call phone 0 s16 'setPreferredDataSubscription' i32 {sim_id}"
         returncode, stdout, stderr = await self.shell.run_command(cmd, timeout)
         if returncode == 0:
             return {"success": True, "method": "service_call", "stdout": stdout, "stderr": stderr}
-        # 备用命令 (适用于某些 OEM)
-        cmd2 = f"settings put global preferred_network_mode {sim_id}"
+
+        # 方法 2: 通过 settings 切换首选网络（注意：此命令设置的是网络类型而非 SIM 卡，
+        # 但在某些 OEM ROM 中可能有副作用，仅作为最后尝试）
+        cmd2 = f"settings put global multi_sim_data_call {sim_id + 1}"
         returncode2, stdout2, stderr2 = await self.shell.run_command(cmd2, timeout)
+        if returncode2 == 0:
+            return {"success": True, "method": "settings_multi_sim", "stdout": stdout2, "stderr": stderr2}
+
         return {
-            "success": returncode2 == 0,
-            "method": "settings",
-            "stdout": stdout2,
+            "success": False,
+            "error": f"No compatible SIM switch method found for sim_id={sim_id}",
             "stderr": stderr2,
-            "returncode": returncode2,
         }
 
     async def set_wifi_enabled(self, enabled: bool, timeout: float = 3.0) -> Dict[str, Any]:
@@ -95,4 +98,3 @@ class HighPrivilegeExecutor:
             return result.get("success") and result.get("multisim_config") == str(target)
         # 其他资源可扩展
         return False
-EOF

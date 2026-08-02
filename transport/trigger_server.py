@@ -44,6 +44,7 @@ class HybridTriggerServer:
         self._read_buffer = b""
         self._fifo_reader_registered = False
         self._semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        self._active_task_count = 0  # 显式计数器，避免访问 Semaphore 私有属性
         self._backlog_count = 0
 
     async def start(self) -> None:
@@ -95,27 +96,32 @@ class HybridTriggerServer:
         if not self._running:
             return
 
-        # 背压：如果并发已满，记录积压，但仍然读取数据到缓冲（不创建 Task）
-        if self._semaphore.locked():
-            self._backlog_count += 1
-            if self._backlog_count % 50 == 0:
-                logger.warning(f"FIFO backlog: {self._backlog_count} messages pending")
-            # 读取数据以清空管道，但只缓冲不处理
-            try:
-                data = os.read(self._fifo_fd, 4096)
-                if data:
-                    self._read_buffer += data
-                    # 但不触发处理，等待资源释放
-            except BlockingIOError:
-                pass
-            return
-
         try:
             data = os.read(self._fifo_fd, 4096)
             if not data:
                 return
 
             self._read_buffer += data
+
+            # 背压：如果并发已满，将缓冲中的完整行丢弃并记录积压
+            if self._semaphore.locked():
+                while b'\n' in self._read_buffer:
+                    line, self._read_buffer = self._read_buffer.split(b'\n', 1)
+                    if line:
+                        self._backlog_count += 1
+                # 缓冲区超过安全阈值时强制截断，防止内存无限增长
+                if len(self._read_buffer) > 65536:  # 64KB 上限
+                    logger.critical(
+                        f"FIFO buffer overflow under backpressure, "
+                        f"discarding {len(self._read_buffer)} bytes, "
+                        f"backlog={self._backlog_count}"
+                    )
+                    self._read_buffer = b""
+                if self._backlog_count > 0 and self._backlog_count % 50 == 0:
+                    logger.warning(f"FIFO backlog: {self._backlog_count} messages dropped")
+                return
+
+            # 正常路径：解析换行并提交处理
             while b'\n' in self._read_buffer:
                 line, self._read_buffer = self._read_buffer.split(b'\n', 1)
                 if line:
@@ -126,11 +132,15 @@ class HybridTriggerServer:
             logger.error(f"FIFO read error: {e}")
 
     async def _process_line_with_semaphore(self, line: bytes) -> None:
-        async with self._semaphore:
-            # 处理前检查积压计数（在信号量释放时清理）
-            if self._backlog_count > 0:
-                self._backlog_count -= 1
-            await self._process_line(line)
+        self._active_task_count += 1
+        try:
+            async with self._semaphore:
+                # 处理前检查积压计数（在信号量释放时清理）
+                if self._backlog_count > 0:
+                    self._backlog_count -= 1
+                await self._process_line(line)
+        finally:
+            self._active_task_count -= 1
 
     async def _process_line(self, line: bytes) -> None:
         try:
@@ -205,7 +215,8 @@ class HybridTriggerServer:
             "status": "healthy",
             "fifo": os.path.exists(self.fifo_path),
             "fifo_fd": self._fifo_fd is not None,
-            "concurrent_tasks": self.max_concurrent_tasks - self._semaphore._value,
+            "concurrent_tasks": self._active_task_count,
+            "max_concurrent": self.max_concurrent_tasks,
             "backlog": self._backlog_count,
         })
 
