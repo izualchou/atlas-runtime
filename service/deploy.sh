@@ -1,7 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
-# Atlas Runtime v8.0 LTS - 一键部署脚本 (Termux 优化版)
-# 适用平台: Android 12+ (Termux)
+# Atlas Runtime v8.0 LTS - 一键部署脚本 (Termux 最终修复版)
 # ============================================================
 
 set -e
@@ -24,8 +23,6 @@ print_ok "Termux 环境检测通过 (PREFIX=$PREFIX)"
 
 MISSING_PKGS=""
 check_command "python3" || MISSING_PKGS="$MISSING_PKGS python"
-check_command "sv"      || MISSING_PKGS="$MISSING_PKGS termux-services"
-check_command "termux-wake-lock" || MISSING_PKGS="$MISSING_PKGS termux-tools"
 check_command "curl"    || MISSING_PKGS="$MISSING_PKGS curl"
 
 if [ -n "$MISSING_PKGS" ]; then
@@ -34,6 +31,21 @@ if [ -n "$MISSING_PKGS" ]; then
     pkg install -y $MISSING_PKGS
 fi
 
+# ---------- 2. 安装 termux-services ----------
+print_step "安装 termux-services (runit 守护进程)..."
+pkg install -y termux-services || { print_error "termux-services 安装失败"; exit 1; }
+print_ok "termux-services 安装完成"
+
+# ---------- 3. 加载环境变量 (使 sv-* 命令可用) ----------
+print_step "加载 Termux 环境配置..."
+if [ -f /data/data/com.termux/files/usr/etc/profile ]; then
+    source /data/data/com.termux/files/usr/etc/profile
+else
+    print_warn "profile 文件不存在，尝试手动加载..."
+    export PATH=$PREFIX/bin:$PATH
+fi
+
+# ---------- 4. Python 版本与依赖 ----------
 NEED_PY_UPGRADE=$(python3 -c "import sys; print(1 if sys.version_info < (3, 11) else 0)" 2>/dev/null || echo "1")
 if [ "$NEED_PY_UPGRADE" -eq 1 ]; then
     print_warn "Python 版本过旧，正在升级..."
@@ -41,26 +53,12 @@ if [ "$NEED_PY_UPGRADE" -eq 1 ]; then
 fi
 print_ok "Python 环境: $(python3 --version)"
 
-# ---------- 2. Python 依赖 (Termux 适配) ----------
 print_step "安装 Python 依赖..."
-
-# 通过 Termux 软件源安装预编译包 (避免编译失败)
-print_step "安装预编译包 (python-psutil)..."
 pkg install -y python-psutil || print_warn "python-psutil 安装失败，将尝试 pip 安装"
-
-# 通过 pip 安装其余纯 Python 包 (不升级 pip)
-print_step "通过 pip 安装纯 Python 依赖..."
 python3 -m pip install aiosqlite msgpack pyyaml aiohttp
-
-# 检查 psutil 是否安装成功
-if ! python3 -c "import psutil" 2>/dev/null; then
-    print_warn "psutil 未安装，尝试通过 pip 安装..."
-    python3 -m pip install psutil || print_warn "psutil 安装失败，请手动执行: pkg install python-psutil"
-fi
-
 print_ok "Python 依赖安装完成"
 
-# ---------- 3. 克隆/更新代码 ----------
+# ---------- 5. 克隆/更新代码 ----------
 print_step "获取 Atlas Runtime 源代码..."
 ATLAS_HOME="$HOME/atlas-runtime"
 if [ -d "$ATLAS_HOME/.git" ]; then
@@ -71,7 +69,7 @@ else
     git clone https://github.com/izualchou/atlas-runtime.git "$ATLAS_HOME"
 fi
 
-# ---------- 4. 清理旧服务 ----------
+# ---------- 6. 清理旧服务 ----------
 print_step "清理旧服务配置..."
 if [ -d "$PREFIX/var/service/atlas-runtime" ]; then
     sv down atlas-runtime 2>/dev/null || true
@@ -79,14 +77,17 @@ if [ -d "$PREFIX/var/service/atlas-runtime" ]; then
     rm -rf "$PREFIX/var/service/atlas-runtime"
 fi
 
-# ---------- 5. 创建 runit 服务 ----------
+# ---------- 7. 创建 runit 服务 ----------
 print_step "配置 runit 服务引擎..."
 mkdir -p "$PREFIX/var/service/atlas-runtime"
 mkdir -p "$PREFIX/var/log/atlas-runtime"
 cp "$ATLAS_HOME/service/run" "$PREFIX/var/service/atlas-runtime/run"
 chmod +x "$PREFIX/var/service/atlas-runtime/run"
 
-# ---------- 6. 开机自启 ----------
+# 确保服务目录权限正确
+chmod 755 "$PREFIX/var/service/atlas-runtime"
+
+# ---------- 8. 开机自启 (Termux:Boot) ----------
 print_step "配置 Boot 开机引导..."
 mkdir -p ~/.termux/boot/
 cat > ~/.termux/boot/start-atlas-runtime << 'BOOT_EOF'
@@ -101,14 +102,13 @@ fi
 BOOT_EOF
 chmod +x ~/.termux/boot/start-atlas-runtime
 
-# ---------- 7. FIFO 管道 ----------
+# ---------- 9. FIFO 与 Tasker 脚本 ----------
 print_step "初始化 IPC 通信链路..."
 FIFO_PATH="$PREFIX/tmp/atlas_trigger.fifo"
 rm -f "$FIFO_PATH"
 mkfifo "$FIFO_PATH"
 chmod 666 "$FIFO_PATH"
 
-# ---------- 8. Tasker 触发脚本 ----------
 mkdir -p ~/.termux/tasker/
 cat > ~/.termux/tasker/trigger_atlas << 'TRIGGER_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
@@ -125,10 +125,10 @@ fi
 TRIGGER_EOF
 chmod +x ~/.termux/tasker/trigger_atlas
 
-# ---------- 9. 启动服务 ----------
-print_step "启动 Atlas Runtime 服务..."
-sv-enable atlas-runtime 2>/dev/null || true
-sv up atlas-runtime
+# ---------- 10. 启用并启动服务 ----------
+print_step "启用并启动 Atlas Runtime 服务..."
+sv-enable atlas-runtime || { print_error "sv-enable 失败，请检查 termux-services 安装"; exit 1; }
+sv up atlas-runtime || { print_error "sv up 失败"; exit 1; }
 sleep 2
 
 if sv status atlas-runtime | grep -q "run:"; then
