@@ -5,6 +5,7 @@ from typing import Optional
 
 logger = logging.getLogger("Atlas.BatteryAware")
 
+
 class BatteryAwareCheckpoint:
     def __init__(
         self,
@@ -21,6 +22,7 @@ class BatteryAwareCheckpoint:
         self.battery_autocheckpoint = battery_autocheckpoint
         self.charging_batch_delay = charging_batch_delay_ms
         self.battery_batch_delay = battery_batch_delay_ms
+
         self._current_is_charging = False
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -51,10 +53,13 @@ class BatteryAwareCheckpoint:
 
     async def _get_charging_status(self) -> bool:
         if self._health_checker:
-            status = await self._health_checker.get_charging_status()
-            if status is not None:
-                return status
-        # 默认返回 True（充电状态）
+            try:
+                status = await self._health_checker.get_charging_status()
+                if status is not None:
+                    return status
+            except Exception:
+                pass
+        # 默认返回 True（充电状态，保守策略）
         return True
 
     async def _apply_policy(self, is_charging: bool) -> None:
@@ -68,15 +73,25 @@ class BatteryAwareCheckpoint:
             mode = "BATTERY"
 
         # 更新 SQLite PRAGMA
-        await self.storage.execute_write(f"PRAGMA wal_autocheckpoint={autocheckpoint};")
+        try:
+            await self.storage.execute_write(f"PRAGMA wal_autocheckpoint={autocheckpoint};")
+        except Exception as e:
+            logger.error(f"Failed to update autocheckpoint: {e}")
+
         # 更新存储驱动的批量延迟
         if hasattr(self.storage, 'set_batch_delay'):
-            self.storage.set_batch_delay(batch_delay)
+            try:
+                self.storage.set_batch_delay(batch_delay)
+            except Exception as e:
+                logger.error(f"Failed to set batch delay: {e}")
 
         logger.info(f"Battery policy: {mode}, autocheckpoint={autocheckpoint}, batch_delay={batch_delay}ms")
 
         if is_charging:
-            await self.storage.checkpoint(full=True)
+            try:
+                await self.storage.checkpoint(full=True)
+            except Exception as e:
+                logger.error(f"Checkpoint failed: {e}")
 
     async def stop(self) -> None:
         self._running = False

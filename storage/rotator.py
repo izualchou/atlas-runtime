@@ -10,9 +10,13 @@ from datetime import datetime
 logger = logging.getLogger("Atlas.Rotator")
 
 class EventRotator:
-    def __init__(self, storage, max_rows: int = 10000,
-                 archive_dir: Optional[str] = None,
-                 check_interval_hours: float = 6.0):
+    def __init__(
+        self,
+        storage,
+        max_rows: int = 10000,
+        archive_dir: Optional[str] = None,
+        check_interval_hours: float = 6.0,
+    ):
         self.storage = storage
         self.max_rows = max_rows
         self.archive_dir = archive_dir or os.path.join(os.getcwd(), "logs", "archive")
@@ -44,29 +48,41 @@ class EventRotator:
             return False
 
         delete_count = count - self.max_rows
-        result = await self.storage.execute_read(
-            "SELECT id FROM events ORDER BY id ASC LIMIT 1 OFFSET ?",
-            (delete_count - 1,)
-        )
-        if not result:
-            return False
-        cutoff_id = result[0][0]
 
+        # 一次性获取需要归档的精确数据（原子化）
         rows = await self.storage.execute_read(
             "SELECT id, trace_id, source, type, payload, created_at "
-            "FROM events WHERE id <= ? ORDER BY id ASC",
-            (cutoff_id,)
+            "FROM events ORDER BY id ASC LIMIT ?",
+            (delete_count,)
         )
+
         if not rows:
             return False
 
-        archive_path = self._generate_archive_path()
-        await self._archive_rows(rows, archive_path)
+        # 获取这批数据中实际的最大 ID
+        cutoff_id = rows[-1][0]
 
+        # 写入归档文件
+        archive_path = self._generate_archive_path()
+        try:
+            await self._archive_rows(rows, archive_path)
+        except Exception as e:
+            logger.error(f"Failed to write archive file: {e}")
+            if os.path.exists(archive_path):
+                try:
+                    os.unlink(archive_path)
+                except OSError:
+                    pass
+            return False
+
+        # 归档成功后精准删除（使用实际最大 ID）
         await self.storage.execute_write("DELETE FROM events WHERE id <= ?", (cutoff_id,))
         await self.storage.checkpoint(full=True)
 
-        logger.info(f"Rotated {len(rows)} rows to {archive_path}, remaining rows={self.max_rows}")
+        logger.info(
+            f"Rotated {len(rows)} rows (max_id={cutoff_id}) to {archive_path}, "
+            f"remaining rows={self.max_rows}"
+        )
         return True
 
     async def _get_event_count(self) -> int:
@@ -79,6 +95,7 @@ class EventRotator:
 
     async def _archive_rows(self, rows: list, archive_path: str) -> None:
         loop = asyncio.get_running_loop()
+
         def _write():
             with gzip.open(archive_path, 'wt', encoding='utf-8') as f:
                 f.write('[\n')
@@ -95,6 +112,7 @@ class EventRotator:
                     if i < len(rows) - 1:
                         f.write(',\n')
                 f.write('\n]\n')
+
         await loop.run_in_executor(None, _write)
 
     async def stop(self):
