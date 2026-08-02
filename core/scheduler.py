@@ -1,7 +1,7 @@
 # core/scheduler.py
 """
-任务调度器 - 修复版
-确保队列计数准确，重试任务不再导致死锁
+任务调度器 - 修复版（P0 F1）
+确保 executor 接收命令字符串而非 Task 对象
 """
 
 import asyncio
@@ -49,10 +49,16 @@ class Task:
 class Scheduler:
     def __init__(
         self,
-        executor: Callable[[Task], Awaitable[Any]],
+        executor: Callable[[str, float], Awaitable[Any]],  # (command, timeout) -> result
         resource_lock,
         max_pending: int = 5000,
     ):
+        """
+        Args:
+            executor: 异步函数，接收 (command_string, timeout) 返回执行结果
+            resource_lock: ResourceLock 实例
+            max_pending: pending 队列最大长度
+        """
         self.executor = executor
         self.resource_lock = resource_lock
         self.max_pending = max_pending
@@ -128,7 +134,6 @@ class Scheduler:
                     self._pending.task_done()
                     break
 
-                # 尝试获取资源锁
                 if task.resource:
                     acquired = await self.resource_lock.try_acquire(
                         task.resource,
@@ -136,13 +141,11 @@ class Scheduler:
                         ttl=60,
                     )
                     if not acquired:
-                        # 资源被占用，放入延迟队列
                         self._pending.task_done()
                         task.scheduled_at = time.time() + 5
                         self._delay[task.id] = task
                         continue
 
-                # 执行任务
                 task.status = TaskStatus.EXECUTING
                 task.started_at = time.time()
                 self._active[task.id] = task
@@ -171,22 +174,43 @@ class Scheduler:
                     self._pending.task_done()
 
     async def _execute_task(self, task: Task) -> None:
+        """执行任务：提取命令并调用 executor"""
+        # 从 action 中提取命令
+        cmd = task.action.get("command")
+        if not cmd:
+            # 兼容：如果 action 直接是字符串，或包含 'cmd' 字段
+            cmd = task.action.get("cmd")
+            if not cmd and isinstance(task.action, str):
+                cmd = task.action
+            elif not cmd:
+                task.status = TaskStatus.FAILED
+                task.error = "No command in task action"
+                task.completed_at = time.time()
+                logger.error(f"Task {task.id} has no command")
+                self._active.pop(task.id, None)
+                if task.resource:
+                    await self.resource_lock.release(task.resource, task.id)
+                return
+
+        timeout = task.action.get("timeout", 5.0)
+
         try:
-            result = await self.executor(task)
+            # 调用 executor 传入命令和超时
+            result = await self.executor(cmd, timeout=timeout)
             task.status = TaskStatus.SUCCESS
             task.result = result
             task.completed_at = time.time()
             logger.info(f"Task {task.id} completed successfully")
-        except asyncio.CancelledError:
-            raise
         except asyncio.TimeoutError:
             task.status = TaskStatus.TIMEOUT
             task.error = "Execution timeout"
+            task.completed_at = time.time()
             logger.warning(f"Task {task.id} timed out")
             await self._release_lock_and_retry(task)
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error = str(e)
+            task.completed_at = time.time()
             logger.error(f"Task {task.id} failed: {e}")
             await self._release_lock_and_retry(task)
         finally:

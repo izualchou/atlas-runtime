@@ -1,7 +1,7 @@
 # core/state_manager.py
 """
-状态管理器（State Manager）
-职责：内存状态管理、定时快照、深拷贝防脏读
+状态管理器 - 修复版（P1 F4）
+快照写入串行化，避免并发覆盖
 """
 
 import asyncio
@@ -54,13 +54,24 @@ class StateManager:
         while self._running:
             try:
                 await asyncio.sleep(self._snapshot_interval)
+
                 async with self._lock:
                     frozen = {
                         "data": copy.deepcopy(self._data),
                         "versions": copy.deepcopy(self._versions),
                     }
-                self._pending_write_task = asyncio.create_task(self._snapshot_mgr.write(frozen))
+
+                # 如果已有待完成的写任务，等待它完成（串行化）
+                if self._pending_write_task and not self._pending_write_task.done():
+                    logger.debug("Waiting for pending snapshot write to complete")
+                    await self._pending_write_task
+
+                # 创建新的写任务
+                self._pending_write_task = asyncio.create_task(
+                    self._snapshot_mgr.write(frozen)
+                )
                 await self._pending_write_task
+
             except asyncio.CancelledError:
                 break
             except Exception as e:

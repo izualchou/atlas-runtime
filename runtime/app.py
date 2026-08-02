@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 # runtime/app.py
 """
-Atlas Runtime v8.0 LTS - 主入口
-统一信号管理，幂等停止，优雅关闭
+Atlas Runtime v8.0 LTS - 主入口（修复版 F6）
+统一项目根目录路径，方便 import
 """
+
+import sys
+from pathlib import Path
+
+# 将项目根目录加入 sys.path（确保所有模块可导入）
+PROJECT_ROOT = Path(__file__).parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import asyncio
 import logging
-import sys
-import yaml
 import signal
-from pathlib import Path
+import yaml
 from typing import Optional, List, Any
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.bootstrap import Bootstrap
 
@@ -35,7 +39,6 @@ class AtlasApp:
             return yaml.safe_load(f)
 
     async def start(self) -> None:
-        """启动应用，注册信号处理器"""
         log_level = self.config['runtime'].get('log_level', 'INFO')
         logging.basicConfig(
             level=getattr(logging, log_level.upper()),
@@ -45,32 +48,27 @@ class AtlasApp:
         logger.info("Atlas Runtime v8.0 LTS starting...")
         logger.info(f"Config: {self.config_path}")
 
-        # 初始化所有组件
         self.bootstrap = Bootstrap(self.config)
         await self.bootstrap.boot()
         self._services = self.bootstrap.get_all_components()
 
-        # 使用 asyncio 原生信号处理器（避免跨 Loop 问题）
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
             except NotImplementedError:
-                # Windows 回退方案
                 signal.signal(sig, lambda s, f: asyncio.create_task(self.stop()))
 
         logger.info("Atlas Runtime is running. Press Ctrl+C to stop.")
         await self._shutdown_event.wait()
 
     async def stop(self) -> None:
-        """幂等停止：多次调用安全，不会重复关闭组件"""
         if self._is_stopping:
             logger.debug("Stop already in progress, ignoring")
             return
         self._is_stopping = True
         logger.info("Stopping Atlas Runtime...")
 
-        # 按逆序停止所有组件
         for service in reversed(self._services):
             if hasattr(service, 'stop'):
                 try:
@@ -79,7 +77,6 @@ class AtlasApp:
                 except Exception as e:
                     logger.error(f"Error stopping {service.__class__.__name__}: {e}")
 
-        # 取消所有残余后台任务
         loop = asyncio.get_running_loop()
         tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
         if tasks:
@@ -92,7 +89,6 @@ class AtlasApp:
         logger.info("Atlas Runtime stopped")
 
     def run(self) -> None:
-        """同步入口"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
@@ -107,7 +103,6 @@ class AtlasApp:
         finally:
             if not self._shutdown_event.is_set():
                 loop.run_until_complete(self.stop())
-            # 清理残留任务
             pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
             if pending:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))

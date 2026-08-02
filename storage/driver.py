@@ -1,7 +1,7 @@
 # storage/driver.py
 """
-单写者队列 SQLite 驱动 - 修复版
-使用哨兵模式平滑关闭，不丢失任何写入
+单写者队列 SQLite 驱动 - 修复版（P0 F2）
+返回值语义明确：INSERT→lastrowid, UPDATE/DELETE→rowcount
 """
 
 import os
@@ -18,7 +18,6 @@ class StorageFullError(Exception):
 class StorageError(Exception):
     pass
 
-# 哨兵对象
 _SENTINEL = object()
 
 
@@ -146,7 +145,6 @@ class SingleWriterStorage:
         return await loop.run_in_executor(None, _read)
 
     async def _writer_loop(self) -> None:
-        """写循环：持续消费队列，遇到哨兵则退出"""
         while self._running:
             batch = []
             try:
@@ -181,9 +179,18 @@ class SingleWriterStorage:
                     mode, sql, params_arg, future = item
                     if mode == "write":
                         cursor = conn.execute(sql, params_arg)
-                        results.append(cursor.lastrowid)
+                        # 根据 SQL 类型决定返回 lastrowid 或 rowcount
+                        sql_upper = sql.strip().upper()
+                        if sql_upper.startswith("INSERT"):
+                            results.append(cursor.lastrowid)
+                        elif sql_upper.startswith(("UPDATE", "DELETE", "REPLACE")):
+                            results.append(cursor.rowcount)
+                        else:
+                            # 其他语句（PRAGMA, BEGIN等）返回 True
+                            results.append(True)
                     elif mode == "many":
                         cursor = conn.executemany(sql, params_arg)
+                        # executemany 返回 rowcount
                         results.append(cursor.rowcount)
                     else:
                         raise ValueError(f"Unknown mode: {mode}")
@@ -260,7 +267,6 @@ class SingleWriterStorage:
         }
 
     async def stop(self) -> None:
-        """优雅关闭：发送哨兵，等待写线程自然结束"""
         self._running = False
         try:
             await self._write_queue.put(_SENTINEL)

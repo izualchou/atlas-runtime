@@ -1,7 +1,7 @@
 # transport/trigger_server.py
 """
-双模触发器 - 修复版
-增加并发限制，防止 FIFO 高流量时任务堆积
+双模触发器 - 修复版（P1 F3）
+背压计数 + HTTP 429 响应，避免静默丢消息
 """
 
 import os
@@ -43,8 +43,8 @@ class HybridTriggerServer:
         self._fifo_fd: Optional[int] = None
         self._read_buffer = b""
         self._fifo_reader_registered = False
-        # 并发限流器
         self._semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        self._backlog_count = 0
 
     async def start(self) -> None:
         if self._running:
@@ -92,12 +92,22 @@ class HybridTriggerServer:
             logger.info("FIFO event loop stopped")
 
     def _on_fifo_readable(self) -> None:
-        """FIFO 可读回调 - 带并发限流"""
         if not self._running:
             return
 
-        # 若并发已满，暂不读取，等待任务释放
+        # 背压：如果并发已满，记录积压，但仍然读取数据到缓冲（不创建 Task）
         if self._semaphore.locked():
+            self._backlog_count += 1
+            if self._backlog_count % 50 == 0:
+                logger.warning(f"FIFO backlog: {self._backlog_count} messages pending")
+            # 读取数据以清空管道，但只缓冲不处理
+            try:
+                data = os.read(self._fifo_fd, 4096)
+                if data:
+                    self._read_buffer += data
+                    # 但不触发处理，等待资源释放
+            except BlockingIOError:
+                pass
             return
 
         try:
@@ -116,8 +126,10 @@ class HybridTriggerServer:
             logger.error(f"FIFO read error: {e}")
 
     async def _process_line_with_semaphore(self, line: bytes) -> None:
-        """使用信号量限制并发数"""
         async with self._semaphore:
+            # 处理前检查积压计数（在信号量释放时清理）
+            if self._backlog_count > 0:
+                self._backlog_count -= 1
             await self._process_line(line)
 
     async def _process_line(self, line: bytes) -> None:
@@ -165,6 +177,13 @@ class HybridTriggerServer:
             raise
 
     async def _handle_http_trigger(self, request: web.Request) -> web.Response:
+        # 检查背压
+        if self._semaphore.locked():
+            return web.json_response(
+                {"status": "error", "message": "Too many requests, backpressure active"},
+                status=429
+            )
+
         try:
             data = await request.json()
             result = await self.trigger_handler(data)
@@ -187,6 +206,7 @@ class HybridTriggerServer:
             "fifo": os.path.exists(self.fifo_path),
             "fifo_fd": self._fifo_fd is not None,
             "concurrent_tasks": self.max_concurrent_tasks - self._semaphore._value,
+            "backlog": self._backlog_count,
         })
 
     async def _handle_ready(self, request: web.Request) -> web.Response:

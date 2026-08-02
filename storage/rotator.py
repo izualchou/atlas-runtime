@@ -1,7 +1,7 @@
 # storage/rotator.py
 """
-事件表轮转器 - 修复版
-使用事务确保归档和删除的一致性
+事件表轮转器 - 修复版（P2 F5）
+RETURNING 降级兼容 + 事务内原子操作
 """
 
 import os
@@ -48,19 +48,15 @@ class EventRotator:
                 logger.error(f"Auto rotate error: {e}")
 
     async def rotate_if_needed(self) -> bool:
-        # 使用事务确保一致性
-        # 获取总行数
-        count = await self.storage.execute_read("SELECT COUNT(*) FROM events")
-        count = count[0][0] if count else 0
+        count = await self._get_event_count()
         if count <= self.max_rows:
             return False
 
         delete_count = count - self.max_rows
 
-        # 开启显式事务 (BEGIN IMMEDIATE)
+        # 开启事务
         await self.storage.execute_write("BEGIN IMMEDIATE")
         try:
-            # 查询需要归档的数据
             rows = await self.storage.execute_read(
                 "SELECT id, trace_id, source, type, payload, created_at "
                 "FROM events ORDER BY id ASC LIMIT ?",
@@ -70,7 +66,9 @@ class EventRotator:
                 await self.storage.execute_write("COMMIT")
                 return False
 
-            # 写入归档文件
+            cutoff_id = rows[-1][0]
+
+            # 写入归档
             archive_path = self._generate_archive_path()
             try:
                 await self._archive_rows(rows, archive_path)
@@ -81,44 +79,54 @@ class EventRotator:
                     os.unlink(archive_path)
                 return False
 
-            # 删除已归档的数据（利用 RETURNING 精确核对）
-            cutoff_id = rows[-1][0]
-            # 执行删除，同时返回被删除的 ID 列表（如果 SQLite 版本支持 RETURNING）
-            # 若不支持，退化为普通 DELETE
+            # 删除旧数据（兼容 RETURNING）
+            deleted_count = 0
             try:
+                # 尝试使用 RETURNING（SQLite 3.35+）
                 deleted_rows = await self.storage.execute_read(
                     "DELETE FROM events WHERE id <= ? RETURNING id",
                     (cutoff_id,)
                 )
-                deleted_ids = [row[0] for row in deleted_rows]
-                if len(deleted_ids) != len(rows):
-                    logger.warning(
-                        f"Archived {len(rows)} rows, but deleted {len(deleted_ids)}. "
-                        "Possible concurrent modifications. Re-archiving may be needed."
-                    )
-                # 提交事务
-                await self.storage.execute_write("COMMIT")
+                deleted_count = len(deleted_rows)
+            except Exception:
+                # 降级：先查询后删除
+                logger.warning("RETURNING not supported, using fallback")
+                check = await self.storage.execute_read(
+                    "SELECT COUNT(*) FROM events WHERE id <= ?",
+                    (cutoff_id,)
+                )
+                expected = check[0][0] if check else 0
+                await self.storage.execute_write(
+                    "DELETE FROM events WHERE id <= ?",
+                    (cutoff_id,)
+                )
+                deleted_count = expected
+
+            await self.storage.execute_write("COMMIT")
+
+            if deleted_count != len(rows):
+                logger.warning(
+                    f"Archived {len(rows)} rows, but deleted {deleted_count}. "
+                    "Possible concurrent modifications."
+                )
+            else:
                 logger.info(
                     f"Rotated {len(rows)} rows (max_id={cutoff_id}) to {archive_path}, "
-                    f"actually deleted {len(deleted_ids)} rows"
+                    f"deleted {deleted_count} rows"
                 )
-            except Exception as e:
-                # 如果不支持 RETURNING，降级为普通 DELETE + COMMIT
-                await self.storage.execute_write("ROLLBACK")
-                # 重新执行不带 RETURNING 的删除（但此时可能丢失一致性，我们重新尝试一次，但简化处理）
-                # 更好的方式：重启事务重试，此处简单处理为重新执行一次
-                await self.storage.execute_write("BEGIN IMMEDIATE")
-                await self.storage.execute_write("DELETE FROM events WHERE id <= ?", (cutoff_id,))
-                await self.storage.execute_write("COMMIT")
-                logger.warning("RETURNING not supported, used simple DELETE")
+
+            # 回收空间
+            await self.storage.checkpoint(full=True)
+            return True
+
         except Exception as e:
             await self.storage.execute_write("ROLLBACK")
             logger.error(f"Rotate transaction failed: {e}")
             return False
 
-        # 执行 checkpoint 回收空间
-        await self.storage.checkpoint(full=True)
-        return True
+    async def _get_event_count(self) -> int:
+        result = await self.storage.execute_read("SELECT COUNT(*) FROM events")
+        return result[0][0] if result else 0
 
     def _generate_archive_path(self) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
