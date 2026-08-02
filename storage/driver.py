@@ -18,7 +18,7 @@ class StorageFullError(Exception):
 class StorageError(Exception):
     pass
 
-# 哨兵对象，用于通知写线程退出
+# 哨兵对象
 _SENTINEL = object()
 
 
@@ -149,13 +149,11 @@ class SingleWriterStorage:
         """写循环：持续消费队列，遇到哨兵则退出"""
         while self._running:
             batch = []
-            # 取第一个元素（可能阻塞，但允许超时）
             try:
                 item = await asyncio.wait_for(
                     self._write_queue.get(),
                     timeout=self._batch_delay_ms / 1000.0
                 )
-                # 检测哨兵
                 if item is _SENTINEL:
                     self._write_queue.task_done()
                     break
@@ -163,17 +161,17 @@ class SingleWriterStorage:
             except asyncio.TimeoutError:
                 continue
 
-            # 取更多元素
             while len(batch) < self._batch_size and not self._write_queue.empty():
                 item = self._write_queue.get_nowait()
                 if item is _SENTINEL:
                     self._write_queue.task_done()
-                    # 将哨兵放回队列，以便后续退出循环
                     await self._write_queue.put(_SENTINEL)
                     break
                 batch.append(item)
 
-            # 执行批量写入
+            if not batch:
+                continue
+
             conn = None
             try:
                 conn = sqlite3.connect(self.db_path, timeout=self.busy_timeout / 1000.0)
@@ -207,17 +205,15 @@ class SingleWriterStorage:
                 for _ in batch:
                     self._write_queue.task_done()
 
-        # 循环结束，处理剩余队列（如果有）
-        if not self._running:
-            # 尝试清空队列中的剩余任务（但不会阻塞）
-            while not self._write_queue.empty():
-                item = self._write_queue.get_nowait()
-                if item is _SENTINEL:
-                    self._write_queue.task_done()
-                    continue
-                mode, sql, params_arg, future = item
-                future.set_exception(StorageError("Storage stopped before write completed"))
+        # 处理剩余队列
+        while not self._write_queue.empty():
+            item = self._write_queue.get_nowait()
+            if item is _SENTINEL:
                 self._write_queue.task_done()
+                continue
+            mode, sql, params_arg, future = item
+            future.set_exception(StorageError("Storage stopped before write completed"))
+            self._write_queue.task_done()
         logger.info("Writer loop exited")
 
     async def checkpoint(self, full: bool = False) -> None:
@@ -266,17 +262,19 @@ class SingleWriterStorage:
     async def stop(self) -> None:
         """优雅关闭：发送哨兵，等待写线程自然结束"""
         self._running = False
-        # 发送哨兵唤醒写线程
         try:
             await self._write_queue.put(_SENTINEL)
         except asyncio.QueueFull:
-            # 队列满时，直接放入（应该不会发生）
             self._write_queue.put_nowait(_SENTINEL)
 
         if self._writer_task:
-            # 等待写线程完成所有剩余任务
             try:
-                await self._writer_task
-            except Exception as e:
-                logger.error(f"Writer task error during stop: {e}")
+                await asyncio.wait_for(self._writer_task, timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.error("Writer task stop timeout, forcing cancel")
+                self._writer_task.cancel()
+                try:
+                    await self._writer_task
+                except asyncio.CancelledError:
+                    pass
         logger.info("Storage driver stopped")

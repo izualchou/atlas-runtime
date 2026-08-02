@@ -40,6 +40,10 @@ class Task:
     error: Optional[str] = None
     result: Any = None
     correlation_id: Optional[str] = None
+    resource: Optional[str] = None
+
+    def __post_init__(self):
+        self.resource = self.action.get("resource")
 
 
 class Scheduler:
@@ -120,51 +124,45 @@ class Scheduler:
             task = None
             try:
                 task = await self._pending.get()
-                # 如果调度器已停止，则直接标记完成并退出
                 if not self._running:
                     self._pending.task_done()
                     break
 
-                resource = task.action.get("resource")
-                if resource:
+                # 尝试获取资源锁
+                if task.resource:
                     acquired = await self.resource_lock.try_acquire(
-                        resource,
+                        task.resource,
                         task.id,
                         ttl=60,
                     )
                     if not acquired:
-                        # 资源被占用，放入延迟队列（注意先标记当前出队完成）
+                        # 资源被占用，放入延迟队列
                         self._pending.task_done()
                         task.scheduled_at = time.time() + 5
                         self._delay[task.id] = task
                         continue
 
+                # 执行任务
                 task.status = TaskStatus.EXECUTING
                 task.started_at = time.time()
                 self._active[task.id] = task
 
-                # 执行任务（确保无论如何都执行 task_done）
                 try:
                     await self._execute_task(task)
                 except asyncio.CancelledError:
-                    # 任务被取消时，依然需要释放资源并标记完成
-                    logger.warning(f"Task {task.id} cancelled during execution")
+                    logger.warning(f"Task {task.id} cancelled")
+                    if task.resource:
+                        await self.resource_lock.release(task.resource, task.id)
                     self._active.pop(task.id, None)
-                    # 释放锁
-                    if resource:
-                        await self.resource_lock.release(resource, task.id)
                     raise
                 finally:
-                    # 确保每个从队列取出的任务最终都会调用 task_done
                     self._pending.task_done()
 
             except asyncio.CancelledError:
-                # 如果 worker 被取消，则清理当前任务
                 if task and task.id in self._active:
                     self._active.pop(task.id, None)
-                    resource = task.action.get("resource")
-                    if resource:
-                        await self.resource_lock.release(resource, task.id)
+                    if task.resource:
+                        await self.resource_lock.release(task.resource, task.id)
                     self._pending.task_done()
                 break
             except Exception as e:
@@ -173,7 +171,6 @@ class Scheduler:
                     self._pending.task_done()
 
     async def _execute_task(self, task: Task) -> None:
-        """执行具体任务，内部异常处理"""
         try:
             result = await self.executor(task)
             task.status = TaskStatus.SUCCESS
@@ -181,7 +178,7 @@ class Scheduler:
             task.completed_at = time.time()
             logger.info(f"Task {task.id} completed successfully")
         except asyncio.CancelledError:
-            raise  # 向上传播，由上层处理
+            raise
         except asyncio.TimeoutError:
             task.status = TaskStatus.TIMEOUT
             task.error = "Execution timeout"
@@ -198,15 +195,13 @@ class Scheduler:
                 asyncio.create_task(self.on_task_complete(task))
 
     async def _release_lock_and_retry(self, task: Task) -> None:
-        """释放资源锁并触发重试"""
-        resource = task.action.get("resource")
-        if resource:
-            await self.resource_lock.release(resource, task.id)
+        if task.resource:
+            await self.resource_lock.release(task.resource, task.id)
 
         if task.retries < task.max_retries:
             task.retries += 1
             task.status = TaskStatus.PENDING
-            delay = 2 ** (task.retries - 1)  # 1,2,4s
+            delay = 2 ** (task.retries - 1)
             task.scheduled_at = time.time() + delay
             self._delay[task.id] = task
             logger.info(f"Task {task.id} scheduled for retry #{task.retries} in {delay}s")

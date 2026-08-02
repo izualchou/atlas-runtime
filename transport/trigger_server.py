@@ -43,6 +43,7 @@ class HybridTriggerServer:
         self._fifo_fd: Optional[int] = None
         self._read_buffer = b""
         self._fifo_reader_registered = False
+        # 并发限流器
         self._semaphore = asyncio.Semaphore(max_concurrent_tasks)
 
     async def start(self) -> None:
@@ -91,10 +92,11 @@ class HybridTriggerServer:
             logger.info("FIFO event loop stopped")
 
     def _on_fifo_readable(self) -> None:
+        """FIFO 可读回调 - 带并发限流"""
         if not self._running:
             return
 
-        # 若并发数已达上限，暂时不读取，等待任务释放
+        # 若并发已满，暂不读取，等待任务释放
         if self._semaphore.locked():
             return
 
@@ -107,7 +109,6 @@ class HybridTriggerServer:
             while b'\n' in self._read_buffer:
                 line, self._read_buffer = self._read_buffer.split(b'\n', 1)
                 if line:
-                    # 使用信号量控制并发
                     asyncio.create_task(self._process_line_with_semaphore(line))
         except BlockingIOError:
             pass
@@ -115,7 +116,7 @@ class HybridTriggerServer:
             logger.error(f"FIFO read error: {e}")
 
     async def _process_line_with_semaphore(self, line: bytes) -> None:
-        """使用信号量限制并发处理数"""
+        """使用信号量限制并发数"""
         async with self._semaphore:
             await self._process_line(line)
 
@@ -184,7 +185,8 @@ class HybridTriggerServer:
         return web.json_response({
             "status": "healthy",
             "fifo": os.path.exists(self.fifo_path),
-            "fifo_fd": self._fifo_fd is not None
+            "fifo_fd": self._fifo_fd is not None,
+            "concurrent_tasks": self.max_concurrent_tasks - self._semaphore._value,
         })
 
     async def _handle_ready(self, request: web.Request) -> web.Response:
