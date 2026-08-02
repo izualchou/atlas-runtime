@@ -83,7 +83,7 @@ class Scheduler:
         logger.info("Scheduler started")
 
     async def submit(self, action: Dict[str, Any], delay: float = 0.0) -> str:
-        if len(self._pending) >= self.max_pending:
+        if self._pending.qsize() >= self.max_pending:
             raise RuntimeError("Pending queue full")
 
         task_id = str(uuid.uuid4())

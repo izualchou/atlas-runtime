@@ -70,11 +70,24 @@ class HybridTriggerServer:
             except OSError as e:
                 logger.warning(f"Failed to remove old FIFO: {e}")
 
-        os.mkfifo(self.fifo_path, 0o666)
+        try:
+            os.mkfifo(self.fifo_path, 0o666)
+        except AttributeError:
+            logger.warning("os.mkfifo not available (non-Unix platform); FIFO disabled")
+            self._fifo_fd = None
+            self._fifo_task = None
+            return
+
         self._fifo_fd = os.open(self.fifo_path, os.O_RDWR | os.O_NONBLOCK)
         logger.info(f"FIFO ready: {self.fifo_path}")
 
     async def _fifo_event_loop(self) -> None:
+        if self._fifo_fd is None:
+            logger.info("FIFO disabled; event loop skipped")
+            while self._running:
+                await asyncio.sleep(1.0)
+            return
+
         logger.info("FIFO event loop started")
         loop = asyncio.get_running_loop()
         self._read_buffer = b""
