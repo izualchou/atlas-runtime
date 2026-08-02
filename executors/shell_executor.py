@@ -1,7 +1,9 @@
 # executors/shell_executor.py
 """
-安全 Shell 执行器
+安全 Shell 执行器（Safe Shell Executor）—— 规范实现
 职责：执行 Shell 命令，超时控制，进程组隔离，管道清理
+
+这是 ShellExecutor 的正式实现。core/shell_executor.py 为兼容性存根。
 """
 
 import asyncio

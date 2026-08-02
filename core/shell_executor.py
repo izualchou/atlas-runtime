@@ -1,7 +1,11 @@
-# executors/shell_executor.py
+# core/shell_executor.py
 """
-安全 Shell 执行器（Safe Shell Executor）
+安全 Shell 执行器（Safe Shell Executor）—— 兼容性存根
 职责：执行 Shell 命令，超时控制，进程组隔离，管道清理
+
+注意：主实现已迁移至 executors/shell_executor.py。
+此文件保留用于向后兼容，功能与 executors 版本完全相同。
+新代码请直接从 executors.shell_executor 导入。
 """
 
 import asyncio
