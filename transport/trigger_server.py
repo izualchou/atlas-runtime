@@ -33,6 +33,8 @@ class HybridTriggerServer:
 
         self._fifo_fd: Optional[int] = None
         self._read_buffer = b""
+        # [FIX] 添加注册标志，避免停止时重复移除
+        self._fifo_reader_registered = False
 
     async def start(self) -> None:
         if self._running:
@@ -66,6 +68,7 @@ class HybridTriggerServer:
         self._read_buffer = b""
 
         loop.add_reader(self._fifo_fd, self._on_fifo_readable)
+        self._fifo_reader_registered = True   # [FIX] 标记已注册
 
         try:
             while self._running:
@@ -73,7 +76,9 @@ class HybridTriggerServer:
         except asyncio.CancelledError:
             pass
         finally:
+            # [FIX] 注销时重置标志
             loop.remove_reader(self._fifo_fd)
+            self._fifo_reader_registered = False
             logger.info("FIFO event loop stopped")
 
     def _on_fifo_readable(self) -> None:
@@ -160,19 +165,21 @@ class HybridTriggerServer:
     async def _handle_ready(self, request: web.Request) -> web.Response:
         return web.json_response({"status": "ready"})
 
-    # ---------- 生命周期管理（修复停止顺序） ----------
+    # ---------- 生命周期管理（修复移除 reader 顺序） ----------
     async def stop(self) -> None:
         self._running = False
 
-        # 1. 优先移除事件循环中的 FD 监听器
+        # [FIX] 只有确认已注册才尝试移除，避免 KeyError
         if self._fifo_fd is not None:
             try:
                 loop = asyncio.get_running_loop()
-                loop.remove_reader(self._fifo_fd)
+                if self._fifo_reader_registered:
+                    loop.remove_reader(self._fifo_fd)
+                    self._fifo_reader_registered = False
             except Exception as e:
                 logger.debug(f"Failed to remove_reader on stop: {e}")
 
-        # 2. 取消并等待 FIFO Task 完成
+        # 取消并等待 FIFO Task
         if self._fifo_task and not self._fifo_task.done():
             self._fifo_task.cancel()
             try:
@@ -182,7 +189,7 @@ class HybridTriggerServer:
             except Exception as e:
                 logger.error(f"Error stopping FIFO task: {e}")
 
-        # 3. 安全关闭文件描述符
+        # 安全关闭文件描述符
         if self._fifo_fd is not None:
             try:
                 os.close(self._fifo_fd)
@@ -190,14 +197,14 @@ class HybridTriggerServer:
                 pass
             self._fifo_fd = None
 
-        # 4. 清理管道文件
+        # 清理管道文件
         if os.path.exists(self.fifo_path):
             try:
                 os.unlink(self.fifo_path)
             except OSError:
                 pass
 
-        # 5. 清理 HTTP 服务
+        # 清理 HTTP 服务
         if self._http_runner:
             try:
                 await self._http_runner.cleanup()

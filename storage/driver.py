@@ -115,25 +115,28 @@ class SingleWriterStorage:
             )
         """)
 
+    # [FIX] 改为非阻塞入队，实现背压
     async def execute_write(self, sql: str, params: Tuple[Any, ...] = ()) -> Any:
-        """单行写入，返回 lastrowid"""
         if self._readonly_mode:
             raise StorageError("Storage is in read-only mode")
         future = asyncio.get_running_loop().create_future()
-        # 统一协议: (mode, sql, params, future)
-        await self._write_queue.put(("write", sql, params, future))
+        try:
+            self._write_queue.put_nowait(("write", sql, params, future))
+        except asyncio.QueueFull:
+            raise StorageFullError(f"Write queue full (size={self.max_queue_size})")
         return await future
 
     async def execute_write_many(self, sql: str, params_list: List[Tuple[Any, ...]]) -> int:
-        """批量写入，返回 rowcount"""
         if self._readonly_mode:
             raise StorageError("Storage is in read-only mode")
         future = asyncio.get_running_loop().create_future()
-        await self._write_queue.put(("many", sql, params_list, future))
+        try:
+            self._write_queue.put_nowait(("many", sql, params_list, future))
+        except asyncio.QueueFull:
+            raise StorageFullError(f"Write queue full (size={self.max_queue_size})")
         return await future
 
     async def execute_read(self, sql: str, params: Tuple[Any, ...] = ()) -> List[Tuple[Any, ...]]:
-        """只读查询"""
         loop = asyncio.get_running_loop()
 
         def _read():
@@ -148,7 +151,6 @@ class SingleWriterStorage:
         return await loop.run_in_executor(None, _read)
 
     async def _writer_loop(self) -> None:
-        """后台写入循环"""
         while self._running:
             batch = []
             try:
@@ -170,7 +172,6 @@ class SingleWriterStorage:
                 results = []
 
                 for item in batch:
-                    # 统一解包: (mode, sql, params, future)
                     mode, sql, params_arg, _ = item
                     if mode == "write":
                         cursor = conn.execute(sql, params_arg)
@@ -183,7 +184,6 @@ class SingleWriterStorage:
 
                 conn.commit()
 
-                # 一一对应设置 future 结果
                 for idx, item in enumerate(batch):
                     future = item[3]
                     if not future.done():

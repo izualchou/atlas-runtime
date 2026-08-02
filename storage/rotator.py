@@ -49,21 +49,17 @@ class EventRotator:
 
         delete_count = count - self.max_rows
 
-        # 一次性获取需要归档的精确数据（原子化）
         rows = await self.storage.execute_read(
             "SELECT id, trace_id, source, type, payload, created_at "
             "FROM events ORDER BY id ASC LIMIT ?",
             (delete_count,)
         )
-
         if not rows:
             return False
 
-        # 获取这批数据中实际的最大 ID
         cutoff_id = rows[-1][0]
-
-        # 写入归档文件
         archive_path = self._generate_archive_path()
+
         try:
             await self._archive_rows(rows, archive_path)
         except Exception as e:
@@ -75,8 +71,20 @@ class EventRotator:
                     pass
             return False
 
-        # 归档成功后精准删除（使用实际最大 ID）
-        await self.storage.execute_write("DELETE FROM events WHERE id <= ?", (cutoff_id,))
+        # 执行删除并获取实际影响行数
+        deleted = await self.storage.execute_write(
+            "DELETE FROM events WHERE id <= ?",
+            (cutoff_id,)
+        )
+        # [FIX] 添加行数校验日志
+        if deleted != len(rows):
+            logger.warning(
+                f"Rotator: deleted {deleted} rows, but archived {len(rows)} rows. "
+                f"Possible concurrent insert/delete."
+            )
+        else:
+            logger.info(f"Deleted {deleted} rows as expected.")
+
         await self.storage.checkpoint(full=True)
 
         logger.info(
