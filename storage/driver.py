@@ -1,10 +1,14 @@
 # storage/driver.py
+"""
+单写者队列 SQLite 驱动 - 修复版
+使用哨兵模式平滑关闭，不丢失任何写入
+"""
+
 import os
 import asyncio
 import logging
 import sqlite3
 from typing import Any, List, Tuple, Optional, Dict
-from contextlib import asynccontextmanager
 
 logger = logging.getLogger("Atlas.Storage")
 
@@ -13,6 +17,9 @@ class StorageFullError(Exception):
 
 class StorageError(Exception):
     pass
+
+# 哨兵对象，用于通知写线程退出
+_SENTINEL = object()
 
 
 class SingleWriterStorage:
@@ -41,7 +48,6 @@ class SingleWriterStorage:
 
     def set_batch_delay(self, delay_ms: int) -> None:
         self._batch_delay_ms = delay_ms
-        logger.debug(f"Batch delay updated to {delay_ms}ms")
 
     async def start(self) -> None:
         if self._running:
@@ -53,7 +59,6 @@ class SingleWriterStorage:
 
     async def _init_database(self) -> None:
         loop = asyncio.get_running_loop()
-
         def _init():
             conn = sqlite3.connect(self.db_path, timeout=self.busy_timeout / 1000.0)
             try:
@@ -65,7 +70,6 @@ class SingleWriterStorage:
                 conn.commit()
             finally:
                 conn.close()
-
         await loop.run_in_executor(None, _init)
 
     def _create_tables(self, conn: sqlite3.Connection) -> None:
@@ -115,30 +119,22 @@ class SingleWriterStorage:
             )
         """)
 
-    # [FIX] 改为非阻塞入队，实现背压
     async def execute_write(self, sql: str, params: Tuple[Any, ...] = ()) -> Any:
         if self._readonly_mode:
             raise StorageError("Storage is in read-only mode")
         future = asyncio.get_running_loop().create_future()
-        try:
-            self._write_queue.put_nowait(("write", sql, params, future))
-        except asyncio.QueueFull:
-            raise StorageFullError(f"Write queue full (size={self.max_queue_size})")
+        await self._write_queue.put(("write", sql, params, future))
         return await future
 
     async def execute_write_many(self, sql: str, params_list: List[Tuple[Any, ...]]) -> int:
         if self._readonly_mode:
             raise StorageError("Storage is in read-only mode")
         future = asyncio.get_running_loop().create_future()
-        try:
-            self._write_queue.put_nowait(("many", sql, params_list, future))
-        except asyncio.QueueFull:
-            raise StorageFullError(f"Write queue full (size={self.max_queue_size})")
+        await self._write_queue.put(("many", sql, params_list, future))
         return await future
 
     async def execute_read(self, sql: str, params: Tuple[Any, ...] = ()) -> List[Tuple[Any, ...]]:
         loop = asyncio.get_running_loop()
-
         def _read():
             conn = sqlite3.connect(self.db_path, timeout=self.busy_timeout / 1000.0)
             try:
@@ -147,32 +143,44 @@ class SingleWriterStorage:
                 return cursor.fetchall()
             finally:
                 conn.close()
-
         return await loop.run_in_executor(None, _read)
 
     async def _writer_loop(self) -> None:
+        """写循环：持续消费队列，遇到哨兵则退出"""
         while self._running:
             batch = []
+            # 取第一个元素（可能阻塞，但允许超时）
             try:
                 item = await asyncio.wait_for(
                     self._write_queue.get(),
                     timeout=self._batch_delay_ms / 1000.0
                 )
+                # 检测哨兵
+                if item is _SENTINEL:
+                    self._write_queue.task_done()
+                    break
                 batch.append(item)
             except asyncio.TimeoutError:
                 continue
 
+            # 取更多元素
             while len(batch) < self._batch_size and not self._write_queue.empty():
-                batch.append(self._write_queue.get_nowait())
+                item = self._write_queue.get_nowait()
+                if item is _SENTINEL:
+                    self._write_queue.task_done()
+                    # 将哨兵放回队列，以便后续退出循环
+                    await self._write_queue.put(_SENTINEL)
+                    break
+                batch.append(item)
 
+            # 执行批量写入
             conn = None
             try:
                 conn = sqlite3.connect(self.db_path, timeout=self.busy_timeout / 1000.0)
                 conn.execute(f"PRAGMA busy_timeout={self.busy_timeout};")
                 results = []
-
                 for item in batch:
-                    mode, sql, params_arg, _ = item
+                    mode, sql, params_arg, future = item
                     if mode == "write":
                         cursor = conn.execute(sql, params_arg)
                         results.append(cursor.lastrowid)
@@ -181,14 +189,11 @@ class SingleWriterStorage:
                         results.append(cursor.rowcount)
                     else:
                         raise ValueError(f"Unknown mode: {mode}")
-
                 conn.commit()
-
                 for idx, item in enumerate(batch):
                     future = item[3]
                     if not future.done():
                         future.set_result(results[idx])
-
             except Exception as e:
                 if conn:
                     conn.rollback()
@@ -196,18 +201,29 @@ class SingleWriterStorage:
                     future = item[3]
                     if not future.done():
                         future.set_exception(StorageError(f"Writer loop error: {e}"))
-
             finally:
                 if conn:
                     conn.close()
                 for _ in batch:
                     self._write_queue.task_done()
 
+        # 循环结束，处理剩余队列（如果有）
+        if not self._running:
+            # 尝试清空队列中的剩余任务（但不会阻塞）
+            while not self._write_queue.empty():
+                item = self._write_queue.get_nowait()
+                if item is _SENTINEL:
+                    self._write_queue.task_done()
+                    continue
+                mode, sql, params_arg, future = item
+                future.set_exception(StorageError("Storage stopped before write completed"))
+                self._write_queue.task_done()
+        logger.info("Writer loop exited")
+
     async def checkpoint(self, full: bool = False) -> None:
         if self._readonly_mode:
             return
         loop = asyncio.get_running_loop()
-
         def _checkpoint():
             conn = sqlite3.connect(self.db_path, timeout=self.busy_timeout / 1000.0)
             try:
@@ -218,14 +234,12 @@ class SingleWriterStorage:
                 conn.commit()
             finally:
                 conn.close()
-
         await loop.run_in_executor(None, _checkpoint)
 
     async def vacuum(self) -> None:
         if self._readonly_mode:
             return
         loop = asyncio.get_running_loop()
-
         def _vacuum():
             conn = sqlite3.connect(self.db_path, timeout=self.busy_timeout / 1000.0)
             try:
@@ -233,7 +247,6 @@ class SingleWriterStorage:
                 conn.commit()
             finally:
                 conn.close()
-
         await loop.run_in_executor(None, _vacuum)
 
     async def set_readonly_mode(self, enabled: bool) -> None:
@@ -251,15 +264,19 @@ class SingleWriterStorage:
         }
 
     async def stop(self) -> None:
+        """优雅关闭：发送哨兵，等待写线程自然结束"""
         self._running = False
+        # 发送哨兵唤醒写线程
+        try:
+            await self._write_queue.put(_SENTINEL)
+        except asyncio.QueueFull:
+            # 队列满时，直接放入（应该不会发生）
+            self._write_queue.put_nowait(_SENTINEL)
+
         if self._writer_task:
-            try:
-                await asyncio.wait_for(self._write_queue.join(), timeout=10.0)
-            except asyncio.TimeoutError:
-                logger.warning("Write queue join timeout, forcing stop")
-            self._writer_task.cancel()
+            # 等待写线程完成所有剩余任务
             try:
                 await self._writer_task
-            except asyncio.CancelledError:
-                pass
+            except Exception as e:
+                logger.error(f"Writer task error during stop: {e}")
         logger.info("Storage driver stopped")

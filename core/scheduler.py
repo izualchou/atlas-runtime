@@ -1,7 +1,7 @@
 # core/scheduler.py
 """
-任务调度器（Scheduler）
-职责：双队列调度、资源锁协调、重试与超时管理
+任务调度器 - 修复版
+确保队列计数准确，重试任务不再导致死锁
 """
 
 import asyncio
@@ -117,9 +117,12 @@ class Scheduler:
 
     async def _worker_loop(self) -> None:
         while self._running:
+            task = None
             try:
                 task = await self._pending.get()
+                # 如果调度器已停止，则直接标记完成并退出
                 if not self._running:
+                    self._pending.task_done()
                     break
 
                 resource = task.action.get("resource")
@@ -130,62 +133,72 @@ class Scheduler:
                         ttl=60,
                     )
                     if not acquired:
-                        # 资源被占用，重新放入延迟队列
+                        # 资源被占用，放入延迟队列（注意先标记当前出队完成）
+                        self._pending.task_done()
                         task.scheduled_at = time.time() + 5
                         self._delay[task.id] = task
-                        self._pending.task_done()
                         continue
 
                 task.status = TaskStatus.EXECUTING
                 task.started_at = time.time()
                 self._active[task.id] = task
 
-                asyncio.create_task(self._execute_task(task))
+                # 执行任务（确保无论如何都执行 task_done）
+                try:
+                    await self._execute_task(task)
+                except asyncio.CancelledError:
+                    # 任务被取消时，依然需要释放资源并标记完成
+                    logger.warning(f"Task {task.id} cancelled during execution")
+                    self._active.pop(task.id, None)
+                    # 释放锁
+                    if resource:
+                        await self.resource_lock.release(resource, task.id)
+                    raise
+                finally:
+                    # 确保每个从队列取出的任务最终都会调用 task_done
+                    self._pending.task_done()
 
             except asyncio.CancelledError:
+                # 如果 worker 被取消，则清理当前任务
+                if task and task.id in self._active:
+                    self._active.pop(task.id, None)
+                    resource = task.action.get("resource")
+                    if resource:
+                        await self.resource_lock.release(resource, task.id)
+                    self._pending.task_done()
                 break
             except Exception as e:
                 logger.error(f"Worker loop error: {e}")
+                if task:
+                    self._pending.task_done()
 
     async def _execute_task(self, task: Task) -> None:
+        """执行具体任务，内部异常处理"""
         try:
             result = await self.executor(task)
             task.status = TaskStatus.SUCCESS
             task.result = result
             task.completed_at = time.time()
             logger.info(f"Task {task.id} completed successfully")
-
-            resource = task.action.get("resource")
-            if resource:
-                await self.resource_lock.release(resource, task.id)
-
+        except asyncio.CancelledError:
+            raise  # 向上传播，由上层处理
         except asyncio.TimeoutError:
             task.status = TaskStatus.TIMEOUT
             task.error = "Execution timeout"
             logger.warning(f"Task {task.id} timed out")
-            # 超时后锁未释放，在重试前强制释放
-            resource = task.action.get("resource")
-            if resource:
-                await self.resource_lock.release(resource, task.id)
-            await self._handle_retry(task)
-
+            await self._release_lock_and_retry(task)
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error = str(e)
             logger.error(f"Task {task.id} failed: {e}")
-            resource = task.action.get("resource")
-            if resource:
-                await self.resource_lock.release(resource, task.id)
-            await self._handle_retry(task)
-
+            await self._release_lock_and_retry(task)
         finally:
             self._active.pop(task.id, None)
-            self._pending.task_done()
             if self.on_task_complete:
                 asyncio.create_task(self.on_task_complete(task))
 
-    async def _handle_retry(self, task: Task) -> None:
-        # 重试前确保锁已释放（安全兜底）
+    async def _release_lock_and_retry(self, task: Task) -> None:
+        """释放资源锁并触发重试"""
         resource = task.action.get("resource")
         if resource:
             await self.resource_lock.release(resource, task.id)
@@ -193,7 +206,7 @@ class Scheduler:
         if task.retries < task.max_retries:
             task.retries += 1
             task.status = TaskStatus.PENDING
-            delay = 2 ** (task.retries - 1)
+            delay = 2 ** (task.retries - 1)  # 1,2,4s
             task.scheduled_at = time.time() + delay
             self._delay[task.id] = task
             logger.info(f"Task {task.id} scheduled for retry #{task.retries} in {delay}s")

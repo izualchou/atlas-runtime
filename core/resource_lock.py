@@ -1,14 +1,7 @@
 # core/resource_lock.py
 """
-资源锁（Resource Lock）
-
-职责：
-1. 资源互斥锁（持久化到 SQLite）
-2. 支持 TTL（租约）
-3. 支持重入（同一任务可多次获取）
-4. 启动时清理过期的孤儿锁
-
-关联修复：E14（孤儿锁清理）
+资源锁 - 修复版
+修复过期锁被清理后 UPDATE 0 行却返回 True 的竞态问题
 """
 
 import time
@@ -23,54 +16,48 @@ logger = logging.getLogger("Atlas.ResourceLock")
 class ResourceLock:
     def __init__(self, storage: SingleWriterStorage):
         self.storage = storage
-        self._lock = asyncio.Lock()  # 内存锁防止并发写冲突
+        self._lock = asyncio.Lock()
 
     async def try_acquire(self, resource: str, owner: str, ttl: int = 60) -> bool:
-        """
-        尝试获取资源锁
-        
-        Args:
-            resource: 资源名
-            owner: 持有者标识（通常是 task_id）
-            ttl: 租约时间（秒）
-        
-        Returns:
-            是否成功获取
-        """
         async with self._lock:
-            # 查询当前锁
+            now = int(time.time())
+
+            # 1. 查询当前锁
             rows = await self.storage.execute_read(
                 "SELECT owner, expires_at FROM resource_locks WHERE resource = ?",
                 (resource,)
             )
 
-            now = int(time.time())
-
             if rows:
-                owner_current, expires_at = rows[0]
-                if owner_current == owner:
-                    # 重入：更新过期时间
+                current_owner, expires_at = rows[0]
+
+                # 重入：更新过期时间
+                if current_owner == owner:
                     await self.storage.execute_write(
-                        "UPDATE resource_locks SET expires_at = ? WHERE resource = ?",
-                        (now + ttl, resource)
+                        "UPDATE resource_locks SET expires_at = ? WHERE resource = ? AND owner = ?",
+                        (now + ttl, resource, owner)
                     )
-                    logger.debug(f"Lock re-acquired for {resource} by {owner}")
                     return True
 
+                # 锁有效且不属于当前所有者
                 if expires_at > now:
-                    # 锁仍有效，被其他持有者占用
                     return False
 
-                # 锁已过期，覆盖
-                await self.storage.execute_write(
+                # 锁已过期，尝试抢占（CAS 条件更新）
+                rowcount = await self.storage.execute_write(
                     "UPDATE resource_locks SET owner = ?, acquired_at = ?, expires_at = ? "
-                    "WHERE resource = ?",
-                    (owner, now, now + ttl, resource)
+                    "WHERE resource = ? AND expires_at = ?",
+                    (owner, now, now + ttl, resource, expires_at)
                 )
-                logger.info(f"Lock overwritten for expired {resource} by {owner}")
-                return True
-            else:
-                # 无锁，插入
+                if rowcount > 0:
+                    logger.debug(f"Lock acquired (overwrote expired) for {resource} by {owner}")
+                    return True
+                else:
+                    # 说明在查询到更新之间被其他线程修改或删除，降级为尝试 INSERT
+                    pass
+
+            # 2. 尝试插入新锁（若已被其他线程插入，则失败）
+            try:
                 await self.storage.execute_write(
                     "INSERT INTO resource_locks (resource, owner, acquired_at, expires_at) "
                     "VALUES (?, ?, ?, ?)",
@@ -78,57 +65,47 @@ class ResourceLock:
                 )
                 logger.debug(f"Lock acquired for {resource} by {owner}")
                 return True
+            except Exception as e:
+                # 唯一约束冲突（资源已被其他人抢占）
+                logger.debug(f"Lock insert failed for {resource}: {e}")
+                return False
 
     async def release(self, resource: str, owner: str) -> bool:
-        """释放资源锁"""
         async with self._lock:
-            rows = await self.storage.execute_read(
-                "SELECT owner FROM resource_locks WHERE resource = ?",
-                (resource,)
-            )
-            if not rows:
-                return False
-
-            if rows[0][0] != owner:
-                logger.warning(f"Attempt to release lock {resource} by non-owner {owner}")
-                return False
-
-            await self.storage.execute_write(
+            rowcount = await self.storage.execute_write(
                 "DELETE FROM resource_locks WHERE resource = ? AND owner = ?",
                 (resource, owner)
             )
-            logger.debug(f"Lock released for {resource} by {owner}")
-            return True
+            if rowcount > 0:
+                logger.debug(f"Lock released for {resource} by {owner}")
+            else:
+                logger.warning(f"Release called for non-existent lock {resource} by {owner}")
+            return rowcount > 0
 
     async def renew(self, resource: str, owner: str, ttl: int = 60) -> bool:
-        """续约锁（延长租约）"""
         async with self._lock:
-            rows = await self.storage.execute_read(
-                "SELECT owner FROM resource_locks WHERE resource = ?",
-                (resource,)
-            )
-            if not rows or rows[0][0] != owner:
-                return False
-
             now = int(time.time())
-            await self.storage.execute_write(
-                "UPDATE resource_locks SET expires_at = ? WHERE resource = ? AND owner = ?",
+            rowcount = await self.storage.execute_write(
+                "UPDATE resource_locks SET expires_at = ? "
+                "WHERE resource = ? AND owner = ?",
                 (now + ttl, resource, owner)
             )
-            return True
+            if rowcount > 0:
+                logger.debug(f"Lock renewed for {resource} by {owner}")
+            else:
+                logger.warning(f"Renew called for non-existent lock {resource} by {owner}")
+            return rowcount > 0
 
     async def clean_expired(self) -> int:
-        """清理所有过期的锁（启动时调用）"""
         now = int(time.time())
-        result = await self.storage.execute_write(
+        rowcount = await self.storage.execute_write(
             "DELETE FROM resource_locks WHERE expires_at <= ?",
             (now,)
         )
-        logger.info(f"Cleaned {result} expired locks")
-        return result
+        logger.info(f"Cleaned {rowcount} expired locks")
+        return rowcount
 
     async def get_locks(self) -> dict:
-        """获取当前所有锁（调试用）"""
         rows = await self.storage.execute_read(
             "SELECT resource, owner, expires_at FROM resource_locks"
         )

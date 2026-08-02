@@ -1,7 +1,7 @@
 # transport/trigger_server.py
 """
-双模触发器服务器（FIFO 主 + HTTP 备）
-修复：捕获 BackpressureError 返回 429
+双模触发器 - 修复版
+增加并发限制，防止 FIFO 高流量时任务堆积
 """
 
 import os
@@ -27,11 +27,13 @@ class HybridTriggerServer:
         fifo_path: str = "/data/data/com.termux/files/usr/tmp/atlas_trigger.fifo",
         http_port: int = 8787,
         http_host: str = "127.0.0.1",
+        max_concurrent_tasks: int = 100,
     ):
         self.trigger_handler = trigger_handler
         self.fifo_path = fifo_path
         self.http_port = http_port
         self.http_host = http_host
+        self.max_concurrent_tasks = max_concurrent_tasks
 
         self._running = False
         self._fifo_task: Optional[asyncio.Task] = None
@@ -41,6 +43,7 @@ class HybridTriggerServer:
         self._fifo_fd: Optional[int] = None
         self._read_buffer = b""
         self._fifo_reader_registered = False
+        self._semaphore = asyncio.Semaphore(max_concurrent_tasks)
 
     async def start(self) -> None:
         if self._running:
@@ -53,7 +56,8 @@ class HybridTriggerServer:
 
         logger.info(
             f"Hybrid trigger server started: FIFO={self.fifo_path}, "
-            f"HTTP={self.http_host}:{self.http_port}"
+            f"HTTP={self.http_host}:{self.http_port}, "
+            f"max_concurrent={self.max_concurrent_tasks}"
         )
 
     # ---------- FIFO 主通道 ----------
@@ -90,6 +94,10 @@ class HybridTriggerServer:
         if not self._running:
             return
 
+        # 若并发数已达上限，暂时不读取，等待任务释放
+        if self._semaphore.locked():
+            return
+
         try:
             data = os.read(self._fifo_fd, 4096)
             if not data:
@@ -99,11 +107,17 @@ class HybridTriggerServer:
             while b'\n' in self._read_buffer:
                 line, self._read_buffer = self._read_buffer.split(b'\n', 1)
                 if line:
-                    asyncio.create_task(self._process_line(line))
+                    # 使用信号量控制并发
+                    asyncio.create_task(self._process_line_with_semaphore(line))
         except BlockingIOError:
             pass
         except Exception as e:
             logger.error(f"FIFO read error: {e}")
+
+    async def _process_line_with_semaphore(self, line: bytes) -> None:
+        """使用信号量限制并发处理数"""
+        async with self._semaphore:
+            await self._process_line(line)
 
     async def _process_line(self, line: bytes) -> None:
         try:
@@ -158,7 +172,7 @@ class HybridTriggerServer:
             logger.warning(f"Backpressure triggered: {e}")
             return web.json_response(
                 {"status": "error", "message": str(e)},
-                status=429  # Too Many Requests
+                status=429
             )
         except json.JSONDecodeError:
             return web.json_response({"status": "error", "message": "Invalid JSON"}, status=400)
