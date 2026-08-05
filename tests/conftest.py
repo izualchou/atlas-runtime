@@ -87,6 +87,21 @@ def sample_config_dict():
             "shell_timeout": 3,
             "ui_timeout": 3,
         },
+        "shizuku_sim": {
+            "rish_path": "~/.atlas_sentinel/bin/rish",
+            "primary_keyword": "Vodafone",
+            "preset_tx_code": 31,
+            "scan_range_start": 20,
+            "scan_range_end": 50,
+        },
+        "samsung_service_codes": {
+            "wifi_enable": 55,
+            "wifi_disable": 55,
+            "data_enable": 77,
+            "data_disable": 77,
+            "airplane_on": 98,
+            "airplane_off": 98,
+        },
     }
 
 
