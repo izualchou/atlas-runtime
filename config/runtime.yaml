@@ -73,7 +73,7 @@ platform:
   prefer_termux_api: true
 
 # ============================================================================
-# Samsung 特定：service call 事务码
+# Samsung 特定：service call 事务码（仅用于 WiFi/Data/Airplane）
 # 这些事务码可能因 One UI 版本和设备型号而异
 # 如果命令失败，系统会自动回退到 AOSP 标准事务码或 settings 命令
 # ============================================================================
@@ -84,5 +84,17 @@ samsung_service_codes:
   data_disable:   77
   airplane_on:    98   # 可能值：98 (One UI 8.x), 59 (AOSP)
   airplane_off:   98
-  sim1_enable:    126  # 可能值：126 (One UI 8.x), 86 (AOSP)
-  sim1_disable:   126
+
+# ============================================================================
+# 双卡数据切换 — Shizuku/Rish 方案（唯一方案）
+# ============================================================================
+shizuku_sim:
+  # Rish 可执行文件路径（相对于 $HOME）
+  rish_path: ~/.atlas_sentinel/bin/rish
+  # 主卡识别关键字（displayName 或 carrierName 中包含此关键字即为「主卡」）
+  primary_keyword: Vodafone
+  # 预设事务码（service call isub 的事务码，One UI 8.x 上经验证为 31）
+  preset_tx_code: 31
+  # 自愈扫描范围（预设事务码失败时自动扫描此范围内的所有事务码）
+  scan_range_start: 20
+  scan_range_end: 50
