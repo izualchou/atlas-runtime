@@ -10,13 +10,9 @@ import logging
 import sqlite3
 from typing import Any, List, Tuple, Optional, Dict
 
+from models.errors import StorageFullError, StorageError  # 从 models 统一导入，消除跨层依赖
+
 logger = logging.getLogger("Atlas.Storage")
-
-class StorageFullError(Exception):
-    pass
-
-class StorageError(Exception):
-    pass
 
 _SENTINEL = object()
 

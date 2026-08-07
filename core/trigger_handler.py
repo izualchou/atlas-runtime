@@ -9,7 +9,7 @@ import logging
 import time
 import msgpack
 from typing import Dict, Any
-from storage.driver import StorageFullError
+from models.errors import StorageFullError, BackpressureError
 
 # 仅用于类型注解，避免循环导入
 from typing import TYPE_CHECKING
@@ -18,11 +18,6 @@ if TYPE_CHECKING:
     from storage.driver import AsyncSQLiteStorage
 
 logger = logging.getLogger("Atlas.TriggerHandler")
-
-
-class BackpressureError(Exception):
-    """背压异常，用于通知调用方稍后重试"""
-    pass
 
 
 class TriggerHandler:

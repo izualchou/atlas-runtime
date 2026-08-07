@@ -19,11 +19,9 @@ from executors.high_privilege import (
     AutoJS6SimSwitcher,
     HighPrivilegeExecutor,
     ShizukuSimManager,
-    SimInfo,
-    SimStatus,
-    SimSwitchResult,
 )
 from executors.shell_executor import SafeShellExecutor
+from models.sim import SimInfo, SimStatus, SimSwitchResult
 
 
 # ---------------------------------------------------------------------------
