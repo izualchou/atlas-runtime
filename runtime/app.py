@@ -25,8 +25,7 @@ import yaml
 from typing import Optional, List, Any
 
 from core.bootstrap import Bootstrap
-from core.platform import PlatformInfo
-from core.health_checker import HealthChecker
+from device import PlatformInfo, HealthChecker
 
 logger = logging.getLogger("Atlas.Runtime")
 

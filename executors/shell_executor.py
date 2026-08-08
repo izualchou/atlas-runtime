@@ -16,16 +16,18 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from typing import Tuple
+
+from executors.base import BaseExecutor, ExecutorResult
+from device import TERMUX_PREFIX
 
 logger = logging.getLogger("Atlas.ShellExecutor")
 
-# Termux 前缀（用于环境变量设置）
-_TERMUX_PREFIX = os.environ.get("PREFIX", "/data/data/com.termux/files/usr")
 _ANDROID_ROOT = os.environ.get("ANDROID_ROOT", "/system")
 
 
-class SafeShellExecutor:
+class SafeShellExecutor(BaseExecutor):
     """
     安全 Shell 命令执行器。
 

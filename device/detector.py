@@ -1,4 +1,4 @@
-# platform/detector.py
+# device/detector.py
 """
 平台检测与能力发现模块（Samsung One UI 8.5 + Termux 适配）
 
@@ -10,12 +10,12 @@
 - 内存/存储容量评估
 
 使用方式：
-    from platform import PlatformInfo
+    from device import PlatformInfo
     info = await PlatformInfo.discover()
     if info.has_termux_api:
         # 使用 termux-api 路径
 
-已从 core/platform.py 迁移至 platform/detector.py（v9.0 架构优化）。
+已从 core/platform.py 迁移至 device/detector.py（v9.0 架构优化）。
 """
 
 import asyncio

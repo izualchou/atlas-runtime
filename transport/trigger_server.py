@@ -15,7 +15,7 @@ try:
 except ImportError:
     web = None
 
-from core.trigger_handler import BackpressureError
+from models.errors import BackpressureError
 
 logger = logging.getLogger("Atlas.TriggerTransport")
 
