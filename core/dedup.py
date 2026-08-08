@@ -218,15 +218,19 @@ class DedupFilter:
             self._entries.move_to_end(key)
 
     def _periodic_cleanup(self, now: float) -> None:
-        """定期清理：当条目超过容量 80% 时，清理超过 TTL 2 倍的过期条目。"""
+        """
+        定期清理：当条目超过容量 80% 时，清理所有已过期条目。
+
+        v9.1.1: 修正条件从 expire_time < now + ttl*2（会清空所有条目）
+        改为 expire_time < now（仅清理真正过期的条目）。
+        """
         threshold = int(self.max_entries * 0.8)
         if len(self._entries) < threshold:
             return
 
-        extended_expiry = now + self.ttl * 2
         keys_to_remove = [
             key for key, expire_time in self._entries.items()
-            if expire_time < extended_expiry
+            if expire_time < now
         ]
 
         for key in keys_to_remove:

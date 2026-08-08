@@ -91,7 +91,6 @@ class AtlasApp:
         # v9.1: 注册 MemoryController 状态变更回调到 HealthChecker
         memory_ctrl = getattr(self.bootstrap, 'memory_controller', None)
         if memory_ctrl is not None:
-            older_state = [None]
             _this = self  # 捕获引用
 
             def _on_memory_state_change(old_state, new_state):

@@ -30,6 +30,8 @@ import yaml
 @pytest.fixture(scope="session")
 def event_loop_policy():
     """Use the default asyncio event loop policy for cross-platform compat."""
+    # v9.1.1: get_event_loop_policy() 是 Python 3.14 推荐方式
+    # DefaultEventLoopPolicy() 类构造器已在 Python 3.14 弃用
     return asyncio.get_event_loop_policy()
 
 
@@ -78,6 +80,15 @@ def sample_config_dict():
         "memory": {
             "soft_limit_mb": 150,
             "hard_limit_mb": 200,
+        },
+        # v9.1.1: 与 config/runtime.yaml 对齐
+        "circuit_breaker": {
+            "failure_threshold": 5,
+            "recovery_timeout": 30.0,
+        },
+        "dedup": {
+            "ttl": 60,
+            "max_entries": 10000,
         },
         "transport": {
             "fifo_path": "/tmp/test_atlas_trigger.fifo",

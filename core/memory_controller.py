@@ -111,6 +111,7 @@ class MemoryController:
         import asyncio
         rss_mb = await asyncio.to_thread(self._probe_rss_mb)
         gate = self._evaluate(rss_mb)
+        self._record_peak(rss_mb)
         self._update_state(gate.state)
         return gate
 
@@ -296,8 +297,6 @@ class MemoryController:
         连续 debounce_count 次相同的期望状态才执行实际切换，
         避免因瞬时 GC 或内存尖峰导致的状态抖动。
         """
-        # 更新峰值
-        # (rss_mb is not available here; peak is tracked via probe)
 
         # 防抖逻辑
         if self._last_desired_state == desired_state:

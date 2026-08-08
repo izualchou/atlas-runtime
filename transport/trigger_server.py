@@ -29,6 +29,8 @@ class HybridTriggerServer:
         http_host: str = "127.0.0.1",
         max_concurrent_tasks: int = 100,
         memory_controller=None,
+        circuit_breaker=None,
+        dedup_filter=None,
     ):
         self.trigger_handler = trigger_handler
         self.fifo_path = fifo_path
@@ -36,6 +38,8 @@ class HybridTriggerServer:
         self.http_host = http_host
         self.max_concurrent_tasks = max_concurrent_tasks
         self.memory_controller = memory_controller  # v9.1 内存门控
+        self.circuit_breaker = circuit_breaker      # v9.1 熔断器
+        self.dedup_filter = dedup_filter            # v9.1 去重
 
         self._running = False
         self._fifo_task: Optional[asyncio.Task] = None
@@ -238,6 +242,31 @@ class HybridTriggerServer:
             return web.json_response({"status": "error", "message": str(e)}, status=500)
 
     async def _handle_health(self, request: web.Request) -> web.Response:
+        # v9.1: 上报内存门控、熔断器、去重状态
+        memory_gate = "unavailable"
+        if self.memory_controller is not None:
+            try:
+                memory_gate = self.memory_controller.state.name
+            except Exception:
+                pass
+
+        circuit_state = "unavailable"
+        if self.circuit_breaker is not None:
+            try:
+                circuit_state = self.circuit_breaker.get_state()
+            except Exception:
+                pass
+
+        dedup_stats = "unavailable"
+        if self.dedup_filter is not None:
+            try:
+                dedup_stats = {
+                    "size": len(self.dedup_filter._entries),
+                    "duplicates_found": self.dedup_filter._duplicates_found,
+                }
+            except Exception:
+                pass
+
         return web.json_response({
             "status": "healthy",
             "fifo": os.path.exists(self.fifo_path),
@@ -245,6 +274,9 @@ class HybridTriggerServer:
             "concurrent_tasks": self._active_task_count,
             "max_concurrent": self.max_concurrent_tasks,
             "backlog": self._backlog_count,
+            "memory_gate": memory_gate,
+            "circuit_breaker": circuit_state,
+            "dedup": dedup_stats,
         })
 
     async def _handle_ready(self, request: web.Request) -> web.Response:

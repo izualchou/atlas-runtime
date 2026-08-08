@@ -236,6 +236,9 @@ class Scheduler:
                     self.circuit_breaker.record_success()
                 logger.info(f"Task {task.id} completed successfully")
             else:
+                # v9.1 熔断器设计意图：命令返回非零退出码属于正常业务失败
+                # （如 SIM 切换未匹配到目标卡、子命令返回错误预期），
+                # 不计入熔断器失败计数。仅 TimeoutError 和未预期异常会计入熔断。
                 # 执行器报告失败（非零退出码等），这是正常的命令执行结果，
                 # 不应触发重试机制。重试仅适用于 TimeoutError 等异常情况。
                 task.status = TaskStatus.FAILED

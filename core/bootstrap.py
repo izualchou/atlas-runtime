@@ -10,7 +10,7 @@
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("Atlas.Bootstrap")
 
@@ -29,10 +29,12 @@ class Bootstrap:
     7. ResourceLock
     8. SafeShellExecutor (无状态)
     9. Scheduler
-    10. TriggerHandler (无状态)
-    11. HybridTriggerServer
-    12. EventRotator
-    13. BatteryAwareCheckpoint
+    10. ResultCallback (无状态；注册到 scheduler.on_task_complete)
+    11. AutoJS6Launcher (无状态；注入 executor)
+    12. TriggerHandler (无状态)
+    13. HybridTriggerServer (注入 circuit_breaker + dedup_filter 用于 /health)
+    14. EventRotator
+    15. BatteryAwareCheckpoint
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -47,6 +49,8 @@ class Bootstrap:
         self.memory_controller = None
         self.circuit_breaker = None
         self.dedup_filter = None
+        self.result_callback = None
+        self.autojs_launcher = None
 
     async def boot(self) -> None:
         """按序启动所有组件"""
@@ -161,19 +165,36 @@ class Bootstrap:
         self.scheduler = scheduler
         logger.info("Scheduler started")
 
-        # ---- 10. TriggerHandler ----
+        # ---- 10. ResultCallback ----
+        from transport.result_callback import ResultCallback
+        result_callback = ResultCallback()
+        scheduler.on_task_complete = result_callback.on_task_complete
+        self.components['result_callback'] = result_callback
+        self.result_callback = result_callback
+        logger.info("ResultCallback registered on scheduler.on_task_complete")
+
+        # ---- 11. AutoJS6Launcher ----
+        from transport.autojs_launcher import AutoJS6Launcher
+        autojs_launcher = AutoJS6Launcher(executor)
+        self.components['autojs_launcher'] = autojs_launcher
+        self.autojs_launcher = autojs_launcher
+        logger.info("AutoJS6Launcher initialized")
+
+        # ---- 12. TriggerHandler ----
         from core.trigger_handler import TriggerHandler
         trigger_handler = TriggerHandler(scheduler, storage)
         self.components['trigger_handler'] = trigger_handler
         # 注意：TriggerHandler 无持久状态、无 stop()，不加入 _component_order
 
-        # ---- 11. TriggerServer ----
+        # ---- 13. TriggerServer ----
         from transport.trigger_server import HybridTriggerServer
         trigger_server = HybridTriggerServer(
             trigger_handler=trigger_handler.handle,
             fifo_path=self.config['transport']['fifo_path'],
             http_port=self.config['transport']['http_port'],
             memory_controller=memory_controller,
+            circuit_breaker=circuit_breaker,
+            dedup_filter=dedup_filter,
         )
         await trigger_server.start()
         self.components['trigger_server'] = trigger_server

@@ -16,6 +16,9 @@ from .scheduler import Scheduler
 from .state_manager import StateManager
 from .resource_lock import ResourceLock
 from .trigger_handler import TriggerHandler
+from .memory_controller import MemoryController
+from .circuit_breaker import CircuitBreaker
+from .dedup import DedupFilter
 
 __all__ = [
     "Bootstrap",
@@ -23,4 +26,7 @@ __all__ = [
     "StateManager",
     "ResourceLock",
     "TriggerHandler",
+    "MemoryController",
+    "CircuitBreaker",
+    "DedupFilter",
 ]

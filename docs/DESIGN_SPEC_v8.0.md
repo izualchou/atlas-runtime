@@ -167,15 +167,22 @@ battery_aware → rotator → trigger_server → scheduler → resource_lock
 1. ConfigLoader (yaml)
 2. SnapshotManager (无状态)
 3. SingleWriterStorage (SQLite 单写者)
-4. StateManager (依赖 storage)
-5. SafeShellExecutor (无状态)
-6. ResourceLock (依赖 storage)
-7. TriggerHandler (依赖 scheduler, storage)
-8. Scheduler (依赖 storage, resource_lock, executor)
-9. Rotator (依赖 storage)
-10. BatteryAwareCheckpoint (依赖 storage, snapshot)
-11. TriggerServer (依赖 trigger_handler)
+4. MemoryController (v9.1: 被动探测 + 两级门控 + 防抖)
+5. CircuitBreaker (v9.1: 三态模型 + 无锁设计)
+6. DedupFilter (v9.1: TTL 窗口 + 惰性清理)
+7. StateManager (依赖 storage)
+8. SafeShellExecutor (无状态)
+9. ResourceLock (依赖 storage)
+10. Scheduler (依赖 storage, resource_lock, executor, memory_controller, circuit_breaker, dedup_filter)
+11. ResultCallback (v9.1: 注册到 scheduler.on_task_complete)
+12. AutoJS6Launcher (v9.1: 注入 executor)
+13. TriggerHandler (依赖 scheduler, storage)
+14. Rotator (依赖 storage)
+15. BatteryAwareCheckpoint (依赖 storage, snapshot)
+16. TriggerServer (依赖 trigger_handler, memory_controller, circuit_breaker, dedup_filter)
 ```
+
+> **v9.1 更新 (2026-08-08)**：新增步骤 4-6（内存门控/熔断/去重）和 11-12（结果回写/AutoJS6 启动器），原步骤编号后移。
 
 **接口**：
 
@@ -732,19 +739,23 @@ executors:
 
 ---
 
-## 九、已知差距与后续任务（设计超前项）
+## 九、已实现差距项与后续任务
 
-以下配置项已在 `runtime.yaml` 中预留，但架构图中对应模块尚未实现，属于**设计超前**，不影响当前核心引擎运行：
+以下配置项已在 `runtime.yaml` 中预留，各模块已于 **v9.1 (2026-08-08)** 全部实现并通过 55 项专项测试：
 
-| 模块 | 配置关联 | 建议实现 |
-| :--- | :--- | :--- |
-| **MemoryController** | `memory.soft_limit_mb`, `hard_limit_mb` | 监控 `psutil.Process()` RSS，软限暂停接单，硬限强制 GC + 拒绝写入 |
-| **CircuitBreaker** | `circuit_breaker_threshold: 5` | 连续失败 N 次后 `open`，冷却后 `half-open`，成功 `close` |
-| **Dedup** | `dedup_ttl: 60` | `action` + `correlation_id` 哈希 + TTL 窗口去重 |
+| 模块 | 配置关联 | 状态 | 实现说明 |
+| :--- | :--- | :--- | :--- |
+| **MemoryController** | `memory.soft_limit_mb`, `hard_limit_mb` | ✅ v9.1 已实现 | 被动探测 + 两级门控（SOFT_THROTTLE/HARD_REJECT）+ 防抖切换 |
+| **CircuitBreaker** | `circuit_breaker_threshold: 5` | ✅ v9.1 已实现 | 三态模型（CLOSED/OPEN/HALF_OPEN）+ 无锁原子设计 |
+| **DedupFilter** | `dedup_ttl: 60` | ✅ v9.1 已实现 | TTL 窗口去重 + 惰性清理（容量 80% 触发） |
 
-**集成任务（P0/P1）**：
+**集成状态（v9.1 — 2026-08-08）**：
+- ResultCallback：已实现并接入 bootstrap 启动链路，注册到 `scheduler.on_task_complete`
+- AutoJS6Launcher：已实现并接入 bootstrap 启动链路，注入 executor
+
+**后续任务**：
 - Tasker 集成：安装 Termux:Tasker → 配置 `trigger_atlas` → 验证触发链路
-- Auto.js6 集成：安装 APK → 开启无障碍 → UDS 客户端脚本 → 验证 UI 操作
+- Auto.js6 集成：安装 APK → 开启无障碍 → 验证 UI 操作
 - 端到端测试：SIM 切换 / UI 点击 / 状态查询 / 崩溃重启 / 快照恢复
 
 ---
