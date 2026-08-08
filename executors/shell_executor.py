@@ -74,6 +74,30 @@ class SafeShellExecutor(BaseExecutor):
         env["PATH"] = ":".join(sorted(paths))
         return env
 
+    async def execute(self, cmd: str = "", timeout: float = None, **kwargs) -> ExecutorResult:
+        """
+        BaseExecutor 协议实现：执行命令并返回统一的 ExecutorResult。
+
+        将 run_command() 的 Tuple[int, str, str] 包装为标准化的结果格式，
+        确保 Scheduler 等调用方可以通过统一接口使用所有执行器。
+
+        Args:
+            cmd: 要执行的 Shell 命令
+            timeout: 超时秒数（None = 使用 default_timeout）
+        """
+        start_time = time.time()
+        returncode, stdout, stderr = await self.run_command(cmd, timeout)
+        elapsed_ms = (time.time() - start_time) * 1000
+
+        return ExecutorResult(
+            success=returncode == 0,
+            data={"stdout": stdout, "stderr": stderr, "returncode": returncode},
+            error=stderr if returncode != 0 else "",
+            method="shell",
+            verified=True,
+            execution_time_ms=elapsed_ms,
+        )
+
     async def run_command(
         self, cmd: str, timeout: float = None
     ) -> Tuple[int, str, str]:

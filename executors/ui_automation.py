@@ -19,12 +19,9 @@ import tempfile
 from typing import Dict, Any, Optional
 
 from .shell_executor import SafeShellExecutor
+from device import TERMUX_PREFIX, TERMUX_TMP
 
 logger = logging.getLogger("Atlas.UIAutomation")
-
-# Termux 临时目录（始终可写）
-_TERMUX_PREFIX = os.environ.get("PREFIX", "/data/data/com.termux/files/usr")
-_TERMUX_TMP = os.path.join(_TERMUX_PREFIX, "tmp")
 
 
 class UIAutomationExecutor:
@@ -40,9 +37,9 @@ class UIAutomationExecutor:
 
         # 确保 Termux 临时目录存在
         try:
-            os.makedirs(_TERMUX_TMP, exist_ok=True)
+            os.makedirs(TERMUX_TMP, exist_ok=True)
         except OSError:
-            logger.warning(f"Cannot create Termux tmp dir: {_TERMUX_TMP}")
+            logger.warning(f"Cannot create Termux tmp dir: {TERMUX_TMP}")
 
     # ------------------------------------------------------------------
     # 点击操作
@@ -144,7 +141,7 @@ class UIAutomationExecutor:
         Termux 适配：dump 到 Termux 自有临时目录而非 /data/local/tmp。
         三星 One UI 8.5 上 /data/local/tmp 可能因 SELinux 策略而无写权限。
         """
-        dump_path = os.path.join(_TERMUX_TMP, "ui_dump.xml")
+        dump_path = os.path.join(TERMUX_TMP, "ui_dump.xml")
 
         # 先删除旧 dump 文件（uiautomator dump 会拒绝覆盖已存在文件）
         try:

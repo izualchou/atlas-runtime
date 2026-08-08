@@ -1,12 +1,8 @@
 """
 Unit tests for core.scheduler — task scheduling with retry/backoff.
 
-Actual API: Scheduler(executor, resource_lock, max_pending=5000)
-  - start() / stop()
-  - submit(action, delay) -> task_id
-  - get_task(task_id) -> Optional[Task]
-  - on_task_complete callback
-  Executor: Callable[[str, float], Awaitable[Any]]  # (cmd, timeout)
+v9.0: Scheduler now uses BaseExecutor protocol (executor.execute(cmd, timeout))
+instead of plain Callable. Tests use MockExecutor subclass for compatibility.
 
 BUG IDENTIFICATION:
   B-001: submit() may raise if pending queue is full but caller may not handle
@@ -20,44 +16,71 @@ import time
 import pytest
 import pytest_asyncio
 
-from core.scheduler import Scheduler, Task, TaskStatus
+from core.scheduler import Scheduler
+from models import Task, TaskStatus
+from executors.base import ExecutorResult, BaseExecutor
 from core.resource_lock import ResourceLock
 from storage.driver import SingleWriterStorage
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Mock executors implementing BaseExecutor protocol
 # ---------------------------------------------------------------------------
 
-async def success_executor(cmd, timeout=5.0):
-    """Simulates a successful command execution."""
-    await asyncio.sleep(0.01)  # simulate work
-    return {"returncode": 0, "stdout": f"ok: {cmd}", "stderr": ""}
+class _MockExecutor(BaseExecutor):
+    """Base for test mock executors with execute(cmd, timeout) interface."""
+    async def execute(self, cmd="", timeout=None, **kwargs):
+        raise NotImplementedError
 
 
-async def fail_executor(cmd, timeout=5.0):
-    """Simulates a failing command."""
-    await asyncio.sleep(0.01)
-    raise RuntimeError(f"command failed: {cmd}")
+class SuccessExecutor(_MockExecutor):
+    async def execute(self, cmd="", timeout=None, **kwargs):
+        await asyncio.sleep(0.01)
+        return ExecutorResult(
+            success=True,
+            data={"stdout": f"ok: {cmd}", "stderr": "", "returncode": 0},
+            method="mock",
+            verified=True,
+        )
 
 
-async def timeout_executor(cmd, timeout=5.0):
-    """Simulates a timeout."""
-    await asyncio.sleep(timeout + 1)
-    return {"returncode": 0}
+class FailExecutor(_MockExecutor):
+    async def execute(self, cmd="", timeout=None, **kwargs):
+        await asyncio.sleep(0.01)
+        raise RuntimeError(f"command failed: {cmd}")
 
 
-class FlakyExecutor:
+class TimeoutExecutor(_MockExecutor):
+    async def execute(self, cmd="", timeout=None, **kwargs):
+        t = timeout if timeout is not None else 5.0
+        await asyncio.sleep(t + 1)
+        return ExecutorResult(success=True, data={}, method="mock", verified=True)
+
+
+class FlakyExecutor(_MockExecutor):
     """Fails N times then succeeds."""
     def __init__(self, fail_count=2):
+        super().__init__()
         self.attempts = 0
         self.fail_count = fail_count
-    async def __call__(self, cmd, timeout=5.0):
+
+    async def execute(self, cmd="", timeout=None, **kwargs):
         self.attempts += 1
         await asyncio.sleep(0.01)
         if self.attempts <= self.fail_count:
             raise RuntimeError(f"flaky fail #{self.attempts}")
-        return {"returncode": 0, "stdout": "finally ok"}
+        return ExecutorResult(
+            success=True,
+            data={"stdout": "finally ok", "returncode": 0},
+            method="mock",
+            verified=True,
+        )
+
+
+# singleton instances for reuse
+success_executor = SuccessExecutor()
+fail_executor = FailExecutor()
+timeout_executor = TimeoutExecutor()
 
 
 # ---------------------------------------------------------------------------

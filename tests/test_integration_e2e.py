@@ -16,13 +16,14 @@ import json
 import pytest
 import pytest_asyncio
 
-from core.scheduler import Scheduler, TaskStatus
+from core.scheduler import Scheduler
 from core.resource_lock import ResourceLock
 from core.trigger_handler import TriggerHandler
 from core.state_manager import StateManager
 from storage.driver import SingleWriterStorage
 from storage.snapshot import SnapshotManager
 from executors.shell_executor import SafeShellExecutor
+from models import TaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ async def executor():
 @pytest_asyncio.fixture
 async def scheduler(rlock, executor):
     sched = Scheduler(
-        executor=executor.run_command,
+        executor=executor,
         resource_lock=rlock,
         max_pending=100,
     )

@@ -1,7 +1,11 @@
 # core/scheduler.py
 """
-任务调度器 - 补丁 A
-修正执行器契约：传递命令字符串而非 Task 对象
+任务调度器。
+
+v9.0 架构优化：
+- Task / TaskStatus 已迁移至 models/task.py（纯数据契约）
+- executor 参数改用 BaseExecutor 协议，调用 executor.execute(cmd, timeout)
+  代替原来的函数调用 executor(cmd, timeout)
 """
 
 import asyncio
@@ -9,53 +13,23 @@ import time
 import logging
 import uuid
 from typing import Dict, Optional, Any, Callable, Awaitable
-from enum import Enum
-from dataclasses import dataclass, field
+
+from models.task import Task, TaskStatus
+from executors.base import BaseExecutor
 
 logger = logging.getLogger("Atlas.Scheduler")
-
-
-class TaskStatus(Enum):
-    PENDING = "pending"
-    SCHEDULED = "scheduled"
-    EXECUTING = "executing"
-    SUCCESS = "success"
-    TIMEOUT = "timeout"
-    FAILED = "failed"
-    DEAD = "dead"
-
-
-@dataclass
-class Task:
-    id: str
-    action: Dict[str, Any]
-    status: TaskStatus = TaskStatus.PENDING
-    priority: int = 5
-    retries: int = 0
-    max_retries: int = 3
-    created_at: float = field(default_factory=time.time)
-    scheduled_at: Optional[float] = None
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    error: Optional[str] = None
-    result: Any = None
-    correlation_id: Optional[str] = None
-    resource: Optional[str] = None
-
-    def __post_init__(self):
-        self.resource = self.action.get("resource")
 
 
 class Scheduler:
     def __init__(
         self,
-        executor: Callable[[str, float], Awaitable[Any]],  # (command, timeout) -> result
+        executor: BaseExecutor,
         resource_lock,
         max_pending: int = 5000,
     ):
         """
         Args:
-            executor: 异步函数，接收 (command_string, timeout) 返回执行结果
+            executor: 实现 BaseExecutor 协议的执行器实例（如 SafeShellExecutor）
             resource_lock: ResourceLock 实例
             max_pending: pending 队列最大长度
         """
@@ -206,12 +180,24 @@ class Scheduler:
         timeout = task.action.get("timeout", 5.0)
 
         try:
-            # 调用 executor 传入命令字符串和超时
-            result = await self.executor(cmd, timeout=timeout)
-            task.status = TaskStatus.SUCCESS
-            task.result = result
-            task.completed_at = time.time()
-            logger.info(f"Task {task.id} completed successfully")
+            # 通过 BaseExecutor 协议调用 execute()，返回 ExecutorResult
+            result = await self.executor.execute(cmd=cmd, timeout=timeout)
+            if result.success:
+                task.status = TaskStatus.SUCCESS
+                task.result = result
+                task.completed_at = time.time()
+                logger.info(f"Task {task.id} completed successfully")
+            else:
+                # 执行器报告失败（非零退出码等），这是正常的命令执行结果，
+                # 不应触发重试机制。重试仅适用于 TimeoutError 等异常情况。
+                task.status = TaskStatus.FAILED
+                task.error = result.error or "Execution returned failure"
+                task.result = result
+                task.completed_at = time.time()
+                logger.error(f"Task {task.id} failed: {task.error}")
+                # 释放资源锁（如果有），但不重试
+                if task.resource:
+                    await self.resource_lock.release(task.resource, task.id)
         except asyncio.TimeoutError:
             task.status = TaskStatus.TIMEOUT
             task.error = "Execution timeout"

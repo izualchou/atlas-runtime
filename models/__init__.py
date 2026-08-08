@@ -13,6 +13,9 @@ from .health import BatteryStatus, MemoryStatus, SystemHealth
 # ---- SIM 管理 ----
 from .sim import SimInfo, SimStatus, SimSwitchResult
 
+# ---- 任务调度 ----
+from .task import Task, TaskStatus
+
 # ---- 通用异常 ----
 from .errors import StorageFullError, StorageError, BackpressureError
 
@@ -25,6 +28,9 @@ __all__ = [
     "SimInfo",
     "SimStatus",
     "SimSwitchResult",
+    # Task
+    "Task",
+    "TaskStatus",
     # Errors
     "StorageFullError",
     "StorageError",

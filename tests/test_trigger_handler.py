@@ -24,12 +24,24 @@ from storage.driver import SingleWriterStorage
 
 
 # ---------------------------------------------------------------------------
-# Mock executor
+# Mock executor (BaseExecutor protocol)
 # ---------------------------------------------------------------------------
 
-async def mock_executor(cmd, timeout=5.0):
-    await asyncio.sleep(0.01)
-    return {"returncode": 0, "stdout": cmd}
+from executors.base import ExecutorResult, BaseExecutor
+
+
+class MockExecutor(BaseExecutor):
+    async def execute(self, cmd="", timeout=None, **kwargs):
+        await asyncio.sleep(0.01)
+        return ExecutorResult(
+            success=True,
+            data={"stdout": cmd, "returncode": 0},
+            method="mock",
+            verified=True,
+        )
+
+
+mock_executor = MockExecutor()
 
 
 # ---------------------------------------------------------------------------

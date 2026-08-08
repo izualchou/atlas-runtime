@@ -1,6 +1,6 @@
 # Atlas Runtime v9.0 架构设计文档
 
-> 版本：v9.0 | 最后更新：2026-08-07
+> 版本：v9.1 | 最后更新：2026-08-08
 
 ## 设计原则
 
@@ -28,7 +28,7 @@
 │    trigger_handler.py      背压控制 + 死信管理            │
 ├─────────────────────────────────────────────────────────┤
 │  executors/                执行器                        │  Layer 3: 执行
-│    base.py                 BaseExecutor ABC ✨            │
+│    base.py                 BaseExecutor ABC ✅            │
 │    shell_executor.py       安全 Shell                     │
 │    ui_automation.py        UI 自动化                      │
 │    sim_switch.py           SIM 卡切换 ✨                  │
@@ -44,9 +44,10 @@
 │    rotator.py              自动轮转归档                   │
 │    battery_aware.py        电量感知 Checkpoint            │
 ├─────────────────────────────────────────────────────────┤
-│  models/                   数据契约 ✨                   │  Layer 0: 模型
+│  models/                   数据契约 ✅                   │  Layer 0: 模型
 │    health.py               电池/内存/系统健康              │
 │    sim.py                  SIM 信息/状态/结果              │
+│    task.py                 Task / TaskStatus 任务模型 ✨   │
 │    errors.py               统一异常类型                    │
 ├─────────────────────────────────────────────────────────┤
 │  config/runtime.yaml       运行时配置                     │  Config
@@ -61,7 +62,7 @@
 
 ```
 Layer 6 (runtime)  → Layer 5 (transport), Layer 4 (core), Layer 2 (device)
-Layer 5 (transport) → Layer 4 (core), Layer 0 (models)
+Layer 5 (transport) → Layer 0 (models)  # v9.1: 移除了对 core 的跨层依赖
 Layer 4 (core)      → Layer 3 (executors), Layer 1 (storage), Layer 0 (models)
 Layer 3 (executors) → Layer 0 (models)
 Layer 2 (device)    → Layer 0 (models)
@@ -84,9 +85,10 @@ Layer 0 (models)    → 无依赖
 |:---|:---|
 | `models/health.py` | BatteryStatus, MemoryStatus, SystemHealth — 健康状态数据类 |
 | `models/sim.py` | SimInfo, SimStatus, SimSwitchResult — SIM 卡数据类 |
+| `models/task.py` ✨ | Task, TaskStatus — 任务调度数据类。从 core/scheduler.py 迁移，消除 trigger_handler 的 TYPE_CHECKING 延迟导入 |
 | `models/errors.py` | StorageFullError, StorageError, BackpressureError, AtlasError — 统一异常类型 |
 
-设计理由：之前 BatteryStatus 等散落在 health_checker.py 中，SimInfo 等在 high_privilege.py 中，StorageFullError 定义在 storage/driver.py 中而被 core/trigger_handler.py 跨层引用。集中到 models/ 后消除了跨层依赖，所有层均可安全引用。
+设计理由：之前 BatteryStatus 等散落在 health_checker.py 中，SimInfo 等在 high_privilege.py 中，StorageFullError 定义在 storage/driver.py 中而被 core/trigger_handler.py 跨层引用。v9.0 集中到 models/ 后消除了跨层依赖，所有层均可安全引用。v9.1 新增 models/task.py，将 Task/TaskStatus 从 core/scheduler.py 提取为纯数据契约。
 
 ### Layer 1: storage/ — 持久层
 
@@ -116,7 +118,7 @@ SQLite WAL 模式 + 自定义单写者队列。职责：
 
 | 模块 | 职责 |
 |:---|:---|
-| `executors/base.py` ✨ | BaseExecutor ABC + ExecutorResult 统一结果类型 |
+| `executors/base.py` ✅ | BaseExecutor ABC + ExecutorResult 统一结果类型。v9.1：SafeShellExecutor 已继承 BaseExecutor，Scheduler 通过 executor.execute() 调用 |
 | `executors/shell_executor.py` | SafeShellExecutor — 安全 Shell 执行（进程组隔离、Termux PATH 适配、超时 killpg） |
 | `executors/ui_automation.py` | UIAutomationExecutor — UI 自动化（uiautomator dump + 点击/滑动/输入） |
 | `executors/sim_switch.py` ✨ | ShizukuSimManager（Shizuku/Rish 方案） + AutoJS6SimSwitcher（ABC 预留） |
@@ -131,7 +133,7 @@ SQLite WAL 模式 + 自定义单写者队列。职责：
 | 模块 | 职责 |
 |:---|:---|
 | `core/bootstrap.py` | Bootstrap — 启动编排，按拓扑顺序初始化各组件 |
-| `core/scheduler.py` | Scheduler — 双队列调度器（高/低优先级队列），任务状态机管理 |
+| `core/scheduler.py` | Scheduler — 双队列调度器。v9.1：Task/TaskStatus 已迁移至 models/task.py；executor 参数改为 BaseExecutor 协议 |
 | `core/state_manager.py` | StateManager — 状态管理 + 原子快照保存/恢复 |
 | `core/resource_lock.py` | ResourceLock — 基于 SQLite CAS 的持久化分布式互斥锁 |
 | `core/trigger_handler.py` | TriggerHandler — 背压控制（队列满时拒绝 + 退避）、死信管理 |
@@ -216,6 +218,10 @@ atlas-runtime/
 │   └── app.py                       # 主入口
 ├── tests/
 │   ├── conftest.py
+│   ├── test_models.py         ✨ v9.1   # models/ 层独立测试
+│   ├── test_device.py         ✨ v9.1   # device/ 层独立测试
+│   ├── test_executor_base.py  ✨ v9.1   # BaseExecutor ABC 测试
+│   ├── test_sim_switch.py     ✨ v9.1   # SIM 切换执行器测试
 │   ├── test_high_privilege.py
 │   ├── test_shell_executor.py
 │   ├── test_driver.py

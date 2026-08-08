@@ -96,7 +96,7 @@ class Bootstrap:
         # ---- 6. Scheduler ----
         from core.scheduler import Scheduler
         scheduler = Scheduler(
-            executor=executor.run_command,
+            executor=executor,
             resource_lock=resource_lock,
             max_pending=self.config['runtime'].get('max_pending', 500)
         )
