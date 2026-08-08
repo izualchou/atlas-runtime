@@ -400,8 +400,10 @@ bash ~/atlas-runtime-temp/service/deploy.sh
 
 ```
 ╔══════════════════════════════════════════════════════════╗
-║   Atlas Runtime v9.0 — 部署完成！                       ║
+║   Atlas Runtime v9.1 — 部署完成！                       ║
 ╚══════════════════════════════════════════════════════════╝
+
+注意：v9.1 版 deploy.sh 已在步骤 9 中自动创建 runit 的 `supervise/` 目录结构（含 `ok`、`control`、`status` 文件）及 `log/run` 日志管线脚本，从根源上杜绝了 "supervise/ok 文件不存在" 的错误。如果你正在阅读一份提及 v9.0 的旧版文档，请升级至仓库最新版本后重新部署。
 ```
 
 最后几行输出应包含验证命令提示，如 `sv status atlas-runtime` 和 `curl http://127.0.0.1:8787/health`。
@@ -425,6 +427,78 @@ tail -50 /data/data/com.termux/files/usr/var/log/atlas-runtime/current
 ```
 
 常见原因包括：Python 依赖缺失（执行 `pip install -r ~/atlas-runtime/requirements.txt` 手动安装）、端口 8787 被占用（执行 `fuser -k 8787/tcp` 释放端口后重启）、配置文件格式错误（检查 `config/runtime.yaml` 的 YAML 缩进）、compatibility stubs 缺失（确认 core/ 下三个 re-export 存根文件存在）。如果日志显示 import 错误，逐一确认 `pip list` 中所有依赖均已安装。
+
+步骤 13-F（supervise/ok 文件缺失——"无法打开 supervise/ok 文件，因为该文件不存在"）:
+
+这是 runit 的 supervise 目录未正常初始化的典型错误。runit 使用 `supervise/` 子目录中的 `ok`、`control`、`status` 和 `lock` 文件来管理服务进程的监控状态。当这些文件不存在时，`sv-enable` 和 `sv up` 均会失败。
+
+此问题的根因有两个层面：(1) v9.0 版 `deploy.sh` 在步骤 9 中未预创建 `supervise/` 目录及其 `ok` 文件，导致 `sv-enable` 调用时 runit 无法找到必需的监控文件；(2) 如果之前曾手动停止或删除过服务，`supervise/` 目录可能被 `sv-disable` 清理或残留了孤儿锁文件。
+
+v9.1 修复版 `deploy.sh` 已在步骤 9 中自动创建完整的 supervise 目录结构。如果你正在使用 v9.0 版脚本或遇到已有部署的 supervise 损坏问题，请按以下步骤手动修复：
+
+修复操作（在 Termux 中逐条执行）：
+
+```bash
+# 1. 定义路径变量
+SVC_DIR=/data/data/com.termux/files/usr/var/service/atlas-runtime
+LOG_DIR=/data/data/com.termux/files/usr/var/log/atlas-runtime
+
+# 2. 确保 supervise 目录存在
+mkdir -p "$SVC_DIR/supervise"
+mkdir -p "$LOG_DIR/supervise"
+
+# 3. 创建 ok/control/status 文件（runit 三要素）
+touch "$SVC_DIR/supervise/ok"
+touch "$SVC_DIR/supervise/control"
+touch "$SVC_DIR/supervise/status"
+touch "$LOG_DIR/supervise/ok"
+touch "$LOG_DIR/supervise/control"
+
+# 4. 清理可能残留的锁文件（防止 "supervise/ok: already locked" 警告）
+rm -f "$SVC_DIR/supervise/lock"
+rm -f "$LOG_DIR/supervise/lock"
+
+# 5. 确认 run 脚本存在且可执行
+ls -la "$SVC_DIR/run"
+# 预期: -rwxr-xr-x ... run
+
+# 6. 确认 log/run 脚本存在（日志管线）
+ls -la "$SVC_DIR/log/run" 2>/dev/null || {
+    # 若不存在，创建 log/run
+    mkdir -p "$SVC_DIR/log"
+    cat > "$SVC_DIR/log/run" << 'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+exec svlogd -tt /data/data/com.termux/files/usr/var/log/atlas-runtime
+EOF
+    chmod +x "$SVC_DIR/log/run"
+    echo "log/run 已创建"
+}
+
+# 7. 验证 supervise 目录完整性
+echo "=== 服务 supervise 目录 ==="
+ls -la "$SVC_DIR/supervise/"
+echo "=== 日志 supervise 目录 ==="
+ls -la "$LOG_DIR/supervise/"
+echo "=== run 脚本 ==="
+ls -la "$SVC_DIR/run"
+echo "=== log/run 脚本 ==="
+ls -la "$SVC_DIR/log/run"
+
+# 8. 重新启动服务
+sv enable atlas-runtime
+sv up atlas-runtime
+sleep 3
+sv status atlas-runtime
+# 预期: run: atlas-runtime: (pid XXXX) XXs
+```
+
+异常处理（修复后仍失败的情况）：
+
+- 若 `sv enable` 返回 "warning: atlas-runtime: can't create supervise/ok: file does not exist"：这表明 `supervise/` 目录本身不存在或路径不对。执行 `ls -la "$SVC_DIR/"` 查看服务目录内容，确认路径中存在 `supervise` 子目录。在极端情况下，请执行 `rm -rf "$SVC_DIR" && mkdir -p "$SVC_DIR/supervise"` 完全重建服务目录后重新执行上述步骤 3-8。
+
+- 若 `sv status` 显示 "fail: ..." 或 "down: ..." 但 supervise 文件已就绪：服务进程本身崩溃，与 supervise 无关，应查阅运行日志 `tail -50 "$LOG_DIR/current"` 排查 Python 或配置层面的错误。
+
+- 若 `sv status` 长时间显示 "run: ... (pid XXXX) 0s" 且秒数不增长：runsv 在反复启动进程（进程每次都立即退出）。执行 `cat "$LOG_DIR/current"` 查看最近的错误输出，通常是 Python 导入错误或端口冲突。
 
 ### 步骤 21：验证部署完整性
 

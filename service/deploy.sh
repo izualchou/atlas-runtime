@@ -198,9 +198,33 @@ print_step "配置 runit 服务..."
 
 SERVICE_DIR="$PREFIX/var/service/atlas-runtime"
 LOG_DIR="$PREFIX/var/log/atlas-runtime"
+SUPERVISE_DIR="$SERVICE_DIR/supervise"
 
 mkdir -p "$SERVICE_DIR"
 mkdir -p "$LOG_DIR"
+mkdir -p "$SUPERVISE_DIR"
+
+# 预创建 supervise/ok 文件 — runit 要求此文件存在才能启动服务
+# 在实际运行中 runsv 会自动更新此文件，但首次部署时必须手动创建
+if [ ! -f "$SUPERVISE_DIR/ok" ]; then
+    touch "$SUPERVISE_DIR/ok"
+fi
+if [ ! -f "$SUPERVISE_DIR/control" ]; then
+    touch "$SUPERVISE_DIR/control"
+fi
+if [ ! -f "$SUPERVISE_DIR/status" ]; then
+    touch "$SUPERVISE_DIR/status"
+fi
+print_info "supervise 目录已初始化: $SUPERVISE_DIR"
+
+# 创建 log/supervise 目录（runit 日志管线）
+mkdir -p "$LOG_DIR/supervise"
+if [ ! -f "$LOG_DIR/supervise/ok" ]; then
+    touch "$LOG_DIR/supervise/ok"
+fi
+if [ ! -f "$LOG_DIR/supervise/control" ]; then
+    touch "$LOG_DIR/supervise/control"
+fi
 
 # 创建 run 脚本（含 Samsung One UI 8.5 特定优化）
 cat > "$SERVICE_DIR/run" << 'RUN_EOF'
@@ -229,6 +253,17 @@ RUN_EOF
 
 chmod +x "$SERVICE_DIR/run"
 chmod 755 "$SERVICE_DIR"
+
+# 创建 log/run 脚本（runit 日志管线 — 必须存在，否则 log supervise 无法就绪）
+mkdir -p "$SERVICE_DIR/log"
+cat > "$SERVICE_DIR/log/run" << 'LOG_RUN_EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# Atlas Runtime — runit 日志管线
+# 将 stdout 管道输入到 svlogd，写入 LOG_DIR
+exec svlogd -tt /data/data/com.termux/files/usr/var/log/atlas-runtime
+LOG_RUN_EOF
+chmod +x "$SERVICE_DIR/log/run"
+
 print_ok "runit 服务脚本已创建"
 
 # ============================================================
@@ -352,16 +387,56 @@ echo ""
 # ============================================================
 print_step "启动 Atlas Runtime 服务..."
 
+# 先确认 supervise 目录结构完整（防止首次部署后 rmdir 等情况）
+SUPERVISE_DIR="$SERVICE_DIR/supervise"
+LOG_SUPERVISE_DIR="$LOG_DIR/supervise"
+
+for _dir in "$SUPERVISE_DIR" "$LOG_SUPERVISE_DIR"; do
+    if [ ! -d "$_dir" ]; then
+        print_warn "$_dir 不存在，正在重建..."
+        mkdir -p "$_dir"
+        touch "$_dir/ok"
+        touch "$_dir/control"
+        touch "$_dir/status" 2>/dev/null || true
+    fi
+    if [ ! -f "$_dir/ok" ]; then
+        print_warn "supervise/ok 文件缺失，正在创建..."
+        touch "$_dir/ok"
+        touch "$_dir/control" 2>/dev/null || true
+        touch "$_dir/status" 2>/dev/null || true
+    fi
+done
+
+# 终止任何残留 runsv 进程（防止 supervise/ok: already locked 错误）
+RUNSV_PIDS=$(pgrep -f "runsv.*atlas-runtime" 2>/dev/null || true)
+if [ -n "$RUNSV_PIDS" ]; then
+    print_warn "检测到残留 runsv 进程 (PIDs: $RUNSV_PIDS)，正在清理..."
+    for pid in $RUNSV_PIDS; do
+        kill "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    # 清理锁文件
+    rm -f "$SUPERVISE_DIR/lock" 2>/dev/null || true
+    rm -f "$LOG_SUPERVISE_DIR/lock" 2>/dev/null || true
+    print_ok "残留进程与锁文件已清理"
+fi
+
 # 启用服务
 sv-enable atlas-runtime 2>/dev/null || {
-    print_error "sv-enable 失败。请检查 termux-services 安装。"
-    print_info "可能需要重启 Termux 后重试: exit && termux"
+    print_error "sv-enable 失败。执行诊断..."
+    print_info "  → supervize 目录状态:"
+    ls -la "$SUPERVISE_DIR/" 2>/dev/null || print_error "     supervise 目录不存在!"
+    print_info "  → 可能需要重启 Termux 后重试: exit && termux"
     exit 1
 }
 
 # 启动服务
 sv up atlas-runtime 2>/dev/null || {
     print_error "sv up 失败。"
+    print_info "诊断命令:"
+    print_info "  ls -la $SUPERVISE_DIR/"
+    print_info "  sv status atlas-runtime"
+    print_info "  tail -20 $LOG_DIR/current"
     exit 1
 }
 
@@ -373,6 +448,8 @@ if sv status atlas-runtime 2>/dev/null | grep -q "run:"; then
 else
     print_warn "服务状态异常，检查日志:"
     print_info "  tail -20 $LOG_DIR/current"
+    print_warn "常见原因: supervise/ok 缺失 → 已在上方自动修复，请重新运行 deploy.sh"
+    print_info "手动修复: touch $SUPERVISE_DIR/ok && sv up atlas-runtime"
 fi
 
 # ============================================================
