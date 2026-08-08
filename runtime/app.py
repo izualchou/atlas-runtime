@@ -88,6 +88,23 @@ class AtlasApp:
         await self.bootstrap.boot()
         self._services = self.bootstrap.get_all_components()
 
+        # v9.1: 注册 MemoryController 状态变更回调到 HealthChecker
+        memory_ctrl = getattr(self.bootstrap, 'memory_controller', None)
+        if memory_ctrl is not None:
+            older_state = [None]
+            _this = self  # 捕获引用
+
+            def _on_memory_state_change(old_state, new_state):
+                logger.info(
+                    f"[MemoryGate] {old_state.name} → {new_state.name}"
+                )
+                hc = _this.health_checker
+                if hc is not None and hasattr(hc, 'set_memory_state'):
+                    hc.set_memory_state(new_state.name)
+
+            memory_ctrl.on_state_change(_on_memory_state_change)
+            logger.info("MemoryController state change callback registered")
+
         # ---- 4. 启动健康检查器 ----
         platform_cfg = self.config.get('platform', {})
         health_interval = platform_cfg.get('health_check_interval', 30)

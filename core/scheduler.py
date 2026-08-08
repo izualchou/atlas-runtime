@@ -26,16 +26,27 @@ class Scheduler:
         executor: BaseExecutor,
         resource_lock,
         max_pending: int = 5000,
+        memory_controller=None,
+        circuit_breaker=None,
+        dedup_filter=None,
     ):
         """
         Args:
             executor: 实现 BaseExecutor 协议的执行器实例（如 SafeShellExecutor）
             resource_lock: ResourceLock 实例
             max_pending: pending 队列最大长度
+            memory_controller: MemoryController 实例（可选，用于内存门控）
+            circuit_breaker: CircuitBreaker 实例（可选，用于故障熔断）
+            dedup_filter: DedupFilter 实例（可选，用于去重）
         """
         self.executor = executor
         self.resource_lock = resource_lock
         self.max_pending = max_pending
+
+        # v9.1 新增：设计超前模块集成
+        self.memory_controller = memory_controller
+        self.circuit_breaker = circuit_breaker
+        self.dedup_filter = dedup_filter
 
         self._pending: asyncio.Queue = asyncio.Queue(maxsize=max_pending)
         self._delay: Dict[str, Task] = {}
@@ -57,6 +68,36 @@ class Scheduler:
         logger.info("Scheduler started")
 
     async def submit(self, action: Dict[str, Any], delay: float = 0.0) -> str:
+        # ---- v9.1 内存门控 ----
+        if self.memory_controller is not None:
+            gate = await self.memory_controller.can_accept()
+            if gate.state.name == "HARD_REJECT":
+                raise RuntimeError(
+                    f"Memory hard limit reached: {gate.reason}"
+                )
+            if gate.state.name == "SOFT_THROTTLE":
+                logger.warning(
+                    f"Memory soft limit: {gate.reason}. "
+                    f"Delay scheduling by 5s"
+                )
+                delay = max(delay, 5.0)
+
+        # ---- v9.1 熔断器检查 ----
+        if self.circuit_breaker is not None and self.circuit_breaker.is_open():
+            raise RuntimeError("Circuit breaker is open, rejecting new task")
+
+        # ---- v9.1 去重检查 ----
+        correlation_id = action.get("correlation_id")
+        if self.dedup_filter is not None and correlation_id:
+            if self.dedup_filter.is_duplicate(correlation_id):
+                logger.debug(
+                    f"Dedup: rejecting duplicate task "
+                    f"(correlation_id={correlation_id[:30]}...)"
+                )
+                raise RuntimeError(
+                    f"Duplicate task: correlation_id={correlation_id[:30]}..."
+                )
+
         if self._pending.qsize() >= self.max_pending:
             raise RuntimeError("Pending queue full")
 
@@ -68,6 +109,10 @@ class Scheduler:
             scheduled_at=time.time() + delay if delay > 0 else None,
         )
         self._all_tasks[task_id] = task
+
+        # ---- v9.1 去重标记 ----
+        if self.dedup_filter is not None and correlation_id:
+            self.dedup_filter.mark_seen(correlation_id)
 
         if delay > 0:
             self._delay[task_id] = task
@@ -186,6 +231,9 @@ class Scheduler:
                 task.status = TaskStatus.SUCCESS
                 task.result = result
                 task.completed_at = time.time()
+                # v9.1: 熔断器记录成功
+                if self.circuit_breaker is not None:
+                    self.circuit_breaker.record_success()
                 logger.info(f"Task {task.id} completed successfully")
             else:
                 # 执行器报告失败（非零退出码等），这是正常的命令执行结果，
@@ -202,12 +250,18 @@ class Scheduler:
             task.status = TaskStatus.TIMEOUT
             task.error = "Execution timeout"
             task.completed_at = time.time()
+            # v9.1: 熔断器记录失败
+            if self.circuit_breaker is not None:
+                self.circuit_breaker.record_failure()
             logger.warning(f"Task {task.id} timed out")
             await self._release_lock_and_retry(task)
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error = str(e)
             task.completed_at = time.time()
+            # v9.1: 熔断器记录失败
+            if self.circuit_breaker is not None:
+                self.circuit_breaker.record_failure()
             logger.error(f"Task {task.id} failed: {e}")
             await self._release_lock_and_retry(task)
         finally:

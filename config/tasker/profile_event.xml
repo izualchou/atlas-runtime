@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TaskerData version="1.0" tv="5.15.0" dvi="1" rvi="1">
+  <!-- ================================================================
+       Profile: ATLAS 事件触发
+       名称: ATLAS: 事件-通知触发
+       触发: 收到来自 Messages/SMS 的通知 (可自定义)
+       任务: ATLAS: 通用触发
+       用途: 特定应用通知到达时执行自动化操作
+  ================================================================ -->
+  <Profile sr="prof_event" ve="2">
+    <cdate>1723104000000</cdate>
+    <edate>1743187200000</edate>
+    <id>1002</id>
+    <flags>8</flags>
+    <mid0>1002</mid0>
+    <nme>ATLAS: 事件-通知触发</nme>
+
+    <!-- 事件上下文: AutoNotification Intercept -->
+    <plugin.EB state="2" sr="con0" ve="2">
+      <code>200</code>
+      <Bundle>
+        <key>EventApp</key>
+        <value>Messages,SMS</value>
+        <key>EventTextFilter</key>
+        <value>验证码|code|CODE</value>
+        <key>EventBehaviour</key>
+        <value>true</value>
+      </Bundle>
+      <Str sr="arg0" ve="3">com.joaomgcd.autoinput</Str>
+      <Str sr="arg1" ve="3">AutoInput Event</Str>
+    </plugin.EB>
+
+    <!-- 关联 Task -->
+    <Task sr="task_trigger_universal"/>
+  </Profile>
+
+  <!-- Task: ATLAS: 通用触发 (精简版，被项目文件完整版本覆盖) -->
+  <Task sr="task_trigger_universal">
+    <cdate>1723104000000</cdate>
+    <edate>1743187200000</edate>
+    <id>2003</id>
+    <nme>ATLAS: 通用触发</nme>
+    <pri>5</pri>
+    <rty>1</rty>
+
+    <Action sr="act0" ve="7">
+      <code>547</code>
+      <Str sr="arg0" ve="3">%trigger_json</Str>
+      <Str sr="arg1" ve="3">{"action":"%par1","params":%par2,"correlation_id":"tasker_%par1_%TIMES"}</Str>
+      <Int sr="arg2" val="0"/>
+      <Int sr="arg3" val="0"/>
+      <Int sr="arg4" val="0"/>
+      <Int sr="arg5" val="0"/>
+      <Int sr="arg6" val="0"/>
+    </Action>
+
+    <Action sr="act1" ve="7">
+      <code>1342177284</code>
+      <Bundle sr="arg0">
+        <key>com.termux.tasker.ARGUMENTS</key>
+        <value>runtime/trigger_atlas.sh %trigger_json</value>
+        <key>com.termux.tasker.EXECUTABLE</key>
+        <value>/data/data/com.termux/files/usr/bin/bash</value>
+        <key>com.termux.tasker.TIMEOUT</key>
+        <value>30</value>
+        <key>com.termux.tasker.WORKDIR</key>
+        <value>/data/data/com.termux/files/home/atlas-runtime</value>
+      </Bundle>
+      <Str sr="arg1" ve="3">com.termux.tasker</Str>
+      <Str sr="arg2" ve="3">com.termux.tasker.TaskerReceiver</Str>
+      <Int sr="arg3" val="0"/>
+    </Action>
+
+    <Action sr="act2" ve="7">
+      <code>30</code>
+      <Int sr="arg0" val="3"/>
+      <Int sr="arg1" val="0"/>
+      <Int sr="arg2" val="0"/>
+      <Int sr="arg3" val="0"/>
+      <Int sr="arg4" val="0"/>
+    </Action>
+
+    <Action sr="act3" ve="7">
+      <code>417</code>
+      <Str sr="arg0" ve="3">/sdcard/atlas_shared/last_result.json</Str>
+      <Str sr="arg1" ve="3">%result_raw</Str>
+    </Action>
+  </Task>
+</TaskerData>

@@ -28,12 +28,14 @@ class HybridTriggerServer:
         http_port: int = 8787,
         http_host: str = "127.0.0.1",
         max_concurrent_tasks: int = 100,
+        memory_controller=None,
     ):
         self.trigger_handler = trigger_handler
         self.fifo_path = fifo_path
         self.http_port = http_port
         self.http_host = http_host
         self.max_concurrent_tasks = max_concurrent_tasks
+        self.memory_controller = memory_controller  # v9.1 内存门控
 
         self._running = False
         self._fifo_task: Optional[asyncio.Task] = None
@@ -200,6 +202,18 @@ class HybridTriggerServer:
             raise
 
     async def _handle_http_trigger(self, request: web.Request) -> web.Response:
+        # v9.1: 内存门控 — 内存压力大时返回 503
+        if self.memory_controller is not None:
+            gate = await self.memory_controller.can_accept()
+            if gate.state.name == "HARD_REJECT":
+                logger.warning(
+                    f"HTTP trigger rejected: {gate.reason}"
+                )
+                return web.json_response(
+                    {"status": "error", "message": "Service unavailable due to memory pressure"},
+                    status=503
+                )
+
         # 检查背压
         if self._semaphore.locked():
             return web.json_response(

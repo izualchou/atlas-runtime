@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TaskerData version="1.0" tv="5.15.0" dvi="1" rvi="1">
+  <!-- ================================================================
+       Task: ATLAS: SIM切换
+       版本: v1.1
+       步骤数: 7
+       说明: 完整的 SIM 切换流程 — 构建 JSON → 调用 Atlas → 等待
+             结果 → 读取 → 解析 → 通知
+       依赖: Termux:Tasker 插件、trigger_atlas.sh、result_callback.py
+  ================================================================ -->
+  <Task sr="task_sim_switch">
+    <cdate>1723104000000</cdate>
+    <edate>1743187200000</edate>
+    <id>2001</id>
+    <nme>ATLAS: SIM切换</nme>
+    <pri>10</pri>
+    <rty>1</rty>
+
+    <!-- Action 1: Variable Set — 构建触发 JSON -->
+    <Action sr="act0" ve="7">
+      <code>547</code>
+      <Str sr="arg0" ve="3">%action_json</Str>
+      <Str sr="arg1" ve="3">{"action":"sim_switch","params":{"slot":0},"correlation_id":"tasker_sim_%TIMES"}</Str>
+      <Int sr="arg2" val="0"/>
+      <Int sr="arg3" val="0"/>
+      <Int sr="arg4" val="0"/>
+      <Int sr="arg5" val="0"/>
+      <Int sr="arg6" val="0"/>
+    </Action>
+
+    <!-- Action 2: Termux:Tasker — 调用 trigger_atlas.sh -->
+    <Action sr="act1" ve="7">
+      <code>1342177284</code>
+      <Bundle sr="arg0">
+        <key>com.termux.tasker.ARGUMENTS</key>
+        <value>runtime/trigger_atlas.sh %action_json</value>
+        <key>com.termux.tasker.EXECUTABLE</key>
+        <value>/data/data/com.termux/files/usr/bin/bash</value>
+        <key>com.termux.tasker.INPUT</key>
+        <value></value>
+        <key>com.termux.tasker.TIMEOUT</key>
+        <value>30</value>
+        <key>com.termux.tasker.WORKDIR</key>
+        <value>/data/data/com.termux/files/home/atlas-runtime</value>
+      </Bundle>
+      <Str sr="arg1" ve="3">com.termux.tasker</Str>
+      <Str sr="arg2" ve="3">com.termux.tasker.TaskerReceiver</Str>
+      <Int sr="arg3" val="0"/>
+    </Action>
+
+    <!-- Action 3: Wait 5 seconds — 给 Atlas 执行时间 -->
+    <Action sr="act2" ve="7">
+      <code>30</code>
+      <Int sr="arg0" val="5"/>
+      <Int sr="arg1" val="0"/>
+      <Int sr="arg2" val="0"/>
+      <Int sr="arg3" val="0"/>
+      <Int sr="arg4" val="0"/>
+    </Action>
+
+    <!-- Action 4: Read File — 读取 last_result.json -->
+    <Action sr="act3" ve="7">
+      <code>417</code>
+      <Str sr="arg0" ve="3">/sdcard/atlas_shared/last_result.json</Str>
+      <Str sr="arg1" ve="3">%result_raw</Str>
+    </Action>
+
+    <!-- Action 5: Variable Split — 检查是否有结果 -->
+    <Action sr="act4" ve="7">
+      <code>37</code>
+      <Str sr="arg0" ve="3">%result_raw</Str>
+      <Str sr="arg1" ve="3">Set</Str>
+      <Int sr="arg2" val="0"/>
+      <Int sr="arg3" val="0"/>
+    </Action>
+
+    <!-- Action 6: JavaScriptlet (if result exists) — 解析 JSON status -->
+    <Action sr="act5" ve="7">
+      <code>413</code>
+      <Str sr="arg0" ve="3">%result_raw</Str>
+      <Str sr="arg1" ve="3">status</Str>
+      <Str sr="arg2" ve="3">%task_status</Str>
+    </Action>
+
+    <!-- Action 7: Notify — 显示结果通知 -->
+    <Action sr="act6" ve="7">
+      <code>523</code>
+      <Str sr="arg0" ve="3">Atlas: SIM 切换 - %task_status</Str>
+      <Str sr="arg1" ve="3">%result_raw</Str>
+      <Str sr="arg2" ve="3"/>
+      <Str sr="arg3" ve="3"/>
+      <Str sr="arg4" ve="3"/>
+      <Str sr="arg5" ve="3">ic_launcher</Str>
+      <Int sr="arg6" val="0"/>
+      <Int sr="arg7" val="0"/>
+      <Int sr="arg8" val="0"/>
+    </Action>
+  </Task>
+</TaskerData>

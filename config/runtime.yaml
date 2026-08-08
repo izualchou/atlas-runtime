@@ -40,6 +40,20 @@ memory:
   # 硬内存限制（MB）- 到达后将拒绝新任务
   hard_limit_mb: 200
 
+# v9.1: CircuitBreaker 熔断器配置
+circuit_breaker:
+  # 连续失败次数阈值，达到后熔断
+  failure_threshold: 5
+  # 冷却时间（秒），冷却结束后进入 HALF_OPEN 半开探测
+  recovery_timeout: 30.0
+
+# v9.1: DedupFilter 去重过滤器配置
+dedup:
+  # 去重窗口 TTL（秒）
+  ttl: 60
+  # 最大内存条目数（防止 OOM）
+  max_entries: 10000
+
 transport:
   # FIFO 路径（Termux 内可写路径）
   # 注意：/data/data/com.termux/files/usr/tmp 在 Termux 中始终可写

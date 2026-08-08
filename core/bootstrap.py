@@ -22,14 +22,17 @@ class Bootstrap:
     组件初始化顺序（严格依赖链）：
     1. Storage (SingleWriterStorage)
     2. SnapshotManager (无状态)
-    3. StateManager
-    4. ResourceLock
-    5. SafeShellExecutor (无状态)
-    6. Scheduler
-    7. TriggerHandler (无状态)
-    8. HybridTriggerServer
-    9. EventRotator
-    10. BatteryAwareCheckpoint
+    3. MemoryController (无状态/同步部件，尽早初始化供 Scheduler 引用)
+    4. CircuitBreaker (无状态部件)
+    5. DedupFilter (无状态部件)
+    6. StateManager
+    7. ResourceLock
+    8. SafeShellExecutor (无状态)
+    9. Scheduler
+    10. TriggerHandler (无状态)
+    11. HybridTriggerServer
+    12. EventRotator
+    13. BatteryAwareCheckpoint
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -41,6 +44,9 @@ class Bootstrap:
         self.battery_aware = None
         self.state_manager = None
         self.scheduler = None
+        self.memory_controller = None
+        self.circuit_breaker = None
+        self.dedup_filter = None
 
     async def boot(self) -> None:
         """按序启动所有组件"""
@@ -65,7 +71,53 @@ class Bootstrap:
         self.components['snapshot'] = snapshot
         # 注意：SnapshotManager 无状态、无 stop()，不加入 _component_order
 
-        # ---- 3. StateManager ----
+        # ---- 3. MemoryController ----
+        mem_cfg = self.config.get('memory', {})
+        from core.memory_controller import MemoryController
+        memory_controller = MemoryController(
+            soft_limit_mb=mem_cfg.get('soft_limit_mb', 150),
+            hard_limit_mb=mem_cfg.get('hard_limit_mb', 200),
+        )
+        self.components['memory_controller'] = memory_controller
+        self.memory_controller = memory_controller
+        logger.info(
+            f"MemoryController initialized "
+            f"(soft={memory_controller.soft_limit_mb}MB, "
+            f"hard={memory_controller.hard_limit_mb}MB)"
+        )
+
+        # ---- 4. CircuitBreaker ----
+        cb_cfg = self.config.get('circuit_breaker', {})
+        from core.circuit_breaker import CircuitBreaker
+        circuit_breaker = CircuitBreaker(
+            failure_threshold=cb_cfg.get('failure_threshold',
+                self.config['runtime'].get('circuit_breaker_threshold', 5)),
+            recovery_timeout=cb_cfg.get('recovery_timeout', 30.0),
+        )
+        self.components['circuit_breaker'] = circuit_breaker
+        self.circuit_breaker = circuit_breaker
+        logger.info(
+            f"CircuitBreaker initialized "
+            f"(threshold={circuit_breaker.failure_threshold}, "
+            f"timeout={circuit_breaker.recovery_timeout}s)"
+        )
+
+        # ---- 5. DedupFilter ----
+        dd_cfg = self.config.get('dedup', {})
+        from core.dedup import DedupFilter
+        dedup_filter = DedupFilter(
+            ttl=dd_cfg.get('ttl',
+                self.config['runtime'].get('dedup_ttl', 60)),
+            max_entries=dd_cfg.get('max_entries', 10000),
+        )
+        self.components['dedup_filter'] = dedup_filter
+        self.dedup_filter = dedup_filter
+        logger.info(
+            f"DedupFilter initialized "
+            f"(ttl={dedup_filter.ttl}s, max={dedup_filter.max_entries})"
+        )
+
+        # ---- 6. StateManager ----
         from core.state_manager import StateManager
         state_manager = StateManager(
             snapshot_mgr=snapshot,
@@ -77,7 +129,7 @@ class Bootstrap:
         self.state_manager = state_manager
         logger.info("StateManager initialized")
 
-        # ---- 4. ResourceLock ----
+        # ---- 7. ResourceLock ----
         from core.resource_lock import ResourceLock
         resource_lock = ResourceLock(storage)
         await resource_lock.clean_expired()
@@ -85,7 +137,7 @@ class Bootstrap:
         self._component_order.append('resource_lock')
         logger.info("ResourceLock initialized (expired locks cleaned)")
 
-        # ---- 5. ShellExecutor ----
+        # ---- 8. ShellExecutor ----
         from executors.shell_executor import SafeShellExecutor
         executor = SafeShellExecutor(
             default_timeout=self.config['executors']['shell_timeout']
@@ -93,12 +145,15 @@ class Bootstrap:
         self.components['executor'] = executor
         # 注意：SafeShellExecutor 无状态、无 stop()，不加入 _component_order
 
-        # ---- 6. Scheduler ----
+        # ---- 9. Scheduler ----
         from core.scheduler import Scheduler
         scheduler = Scheduler(
             executor=executor,
             resource_lock=resource_lock,
-            max_pending=self.config['runtime'].get('max_pending', 500)
+            max_pending=self.config['runtime'].get('max_pending', 500),
+            memory_controller=memory_controller,
+            circuit_breaker=circuit_breaker,
+            dedup_filter=dedup_filter,
         )
         await scheduler.start()
         self.components['scheduler'] = scheduler
@@ -106,25 +161,26 @@ class Bootstrap:
         self.scheduler = scheduler
         logger.info("Scheduler started")
 
-        # ---- 7. TriggerHandler ----
+        # ---- 10. TriggerHandler ----
         from core.trigger_handler import TriggerHandler
         trigger_handler = TriggerHandler(scheduler, storage)
         self.components['trigger_handler'] = trigger_handler
         # 注意：TriggerHandler 无持久状态、无 stop()，不加入 _component_order
 
-        # ---- 8. TriggerServer ----
+        # ---- 11. TriggerServer ----
         from transport.trigger_server import HybridTriggerServer
         trigger_server = HybridTriggerServer(
             trigger_handler=trigger_handler.handle,
             fifo_path=self.config['transport']['fifo_path'],
             http_port=self.config['transport']['http_port'],
+            memory_controller=memory_controller,
         )
         await trigger_server.start()
         self.components['trigger_server'] = trigger_server
         self._component_order.append('trigger_server')
         logger.info("TriggerServer started")
 
-        # ---- 9. Rotator ----
+        # ---- 12. Rotator ----
         from storage.rotator import EventRotator
         rotator = EventRotator(
             storage=storage,
@@ -136,7 +192,7 @@ class Bootstrap:
         self._component_order.append('rotator')
         logger.info("EventRotator started")
 
-        # ---- 10. BatteryAwareCheckpoint ----
+        # ---- 13. BatteryAwareCheckpoint ----
         from storage.battery_aware import BatteryAwareCheckpoint
         battery = BatteryAwareCheckpoint(
             storage=storage,

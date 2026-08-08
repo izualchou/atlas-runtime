@@ -17,9 +17,18 @@ Atlas Runtime is an Android automation runtime running on Samsung One UI 8.5 + T
 - Logger names preserved across module migrations (e.g., `Atlas.HealthChecker`, `Atlas.HighPrivilege`)
 - `device/` directory name chosen over `platform/` to avoid collision with Python stdlib `platform` module
 
+## External Integration Layer (2026-08-08)
+- **30 new files** generated across 5 phases
+- **Phase 1**: core/memory_controller.py (3-tier probe + 2-level gate), core/circuit_breaker.py (3-state), core/dedup.py (TTL window)
+- **Phase 2**: runtime/trigger_atlas.sh (FIFO+HTTP), transport/result_callback.py (atomic write), transport/autojs_launcher.py (dual-pkg fallback)
+- **Phase 3**: config/tasker/ — 8 XML files (1 project + 3 profiles + 4 tasks)
+- **Phase 4**: scripts/autojs/ — 6 JS files (1 template + 5 specialized scripts)
+- **Phase 5**: E2E checklist (5 scenarios/30 items), Tasker guide, AutoJS6 guide
+- All new modules integrate via optional constructor injection (backward compatible)
+
 ## Testing
-- ~290 total tests (236 passing on Windows with flaky exclusions)
-- 4 new test files: test_models.py, test_device.py, test_executor_base.py, test_sim_switch.py (54 tests)
+- ~345 total tests (291 passing on Windows with flaky exclusions)
+- 7 new test files: test_models.py, test_device.py, test_executor_base.py, test_sim_switch.py, test_memory_controller.py, test_circuit_breaker.py, test_dedup.py (109 tests)
 - Known pre-existing failures: bootstrap teardown SQLite lock on Windows, scheduler retry timeout (timing-dependent), rotator transaction errors on Windows
 - Use `python -m pytest tests/ -k "not test_task_retries and not test_rotate_if_needed_above_limit and not test_archive_file_created and not bootstrap"` for clean runs
 
