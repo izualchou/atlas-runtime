@@ -50,10 +50,13 @@
     <!-- Action 4: If — %result_content Is Set -->
     <Action sr="act3" ve="7">
       <code>37</code>
-      <Str sr="arg0" ve="3">%result_content</Str>
-      <Str sr="arg1" ve="3">Set</Str>
-      <Int sr="arg2" val="0"/>
-      <Int sr="arg3" val="0"/>
+      <ConditionList sr="if">
+        <Condition sr="c0" ve="3">
+          <lhs>%result_content</lhs>
+          <op>12</op>
+          <rhs></rhs>
+        </Condition>
+      </ConditionList>
     </Action>
 
     <!-- Action 5: JavaScriptlet — 解析 JSON 提取 status 和 task_id (code=418) -->
