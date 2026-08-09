@@ -1,6 +1,6 @@
 # Tasker 集成配置指南
 
-版本: v1.1 | 日期: 2026-08-09
+版本: v1.2 | 日期: 2026-08-09
 
 本文档指导用户将 Atlas Runtime 的 Tasker 配置文件导入并部署到 Android 设备。
 所有 XML 文件均已审计并符合 Tasker v6.6.20 导入规范。
@@ -132,11 +132,11 @@ adb shell pm grant net.dinglisch.android.taskerm android.permission.PACKAGE_USAG
 
 ### Profile：事件触发 (profile_event.xml)
 
-收到来自 Messages/SMS 应用的通知时触发。配置 AutoNotification 插件后，可自定义监听的应用和文本过滤器。
+收到来自 Messages/SMS 应用的通知时触发，使用 Tasker 原生 Notification 事件 (code=222)。如需更高级的过滤器（正则文本匹配、多应用监听等），可在导入后通过 Tasker UI 替换为 AutoNotification 插件事件。
 
 关键属性：
-- `<Event sr="con0">` — 事件上下文，`code="222"` = Notification Event
-- `<Bundle>` — TaskerPlugin 参数包（如扩展至 AutoNotification 需调整 Bundle key）
+- `<Event sr="con0">` — 事件上下文，`code="222"` = Notification Event（Tasker 原生）
+- `arg0` — 监听的应用包名（默认 "Messages"），可在 Tasker UI 中修改
 
 ### Profile：状态触发 (profile_state.xml)
 
@@ -221,10 +221,10 @@ atlas_trigger.prj.xml (项目入口)
 ```
 
 外部依赖：
-- **atlas-runtime API**: `runtime/trigger_atlas.sh` — FIFO + HTTP 双通道触发
+- **Atlas Runtime API**: `runtime/trigger_atlas.sh` — FIFO + HTTP 双通道触发
 - **Termux:Tasker Plugin**: `com.termux.tasker` — Intents 桥梁
 - **共享存储**: `/sdcard/atlas_shared/last_result.json` — 结果回传
-- **可选**: AutoNotification 插件 — 扩展事件触发能力
+- **高级可选**: AutoNotification 插件 (com.joaomgcd.autonotification) — 如需正则文本匹配或多应用通知过滤，导入后在 Tasker UI 中将 Profile 2 的 Event 替换为 AutoNotification Intercept
 
 ---
 

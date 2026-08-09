@@ -16,24 +16,16 @@
     <nme>ATLAS: 事件-通知触发</nme>
 
     <!-- 
-      AutoNotification Intercept — 监听特定应用通知
-      依赖: AutoNotification 插件 (com.joaomgcd.autonotification, v4.3+)
-      原生降级方案: Tasker 内置 Event → UI → Notification
-                (仅支持单一应用过滤，不支持正则文本匹配)
-      plugin.EB 是 Tasker 对 Event Behaviour 插件的原生 XML 格式
+      使用 Tasker 原生 Notification 事件 (code=222)
+      替代 AutoNotification 插件的 plugin.EB 节点（非标准 XML，会导致导入失败）
+      导入后可在 Tasker UI 中手动配置 App 和文本过滤器
     -->
-    <plugin.EB state="2" sr="con0" ve="2">
-      <code>200</code>
-      <Bundle sr="arg0">
-        <key>NotificationApp</key>
-        <value>Messages,SMS</value>
-        <key>NotificationTextFilter</key>
-        <value>验证码|code|CODE</value>
-        <key>NotificationEventBehaviour</key>
-        <value>true</value>
-      </Bundle>
-      <Str sr="arg0" ve="3">com.joaomgcd.autonotification</Str>
-      <Str sr="arg1" ve="3">AutoNotification Intercept</Str>
-    </plugin.EB>
+    <Event sr="con0" ve="2">
+      <code>222</code>
+      <pri>0</pri>
+      <Str sr="arg0" ve="3">Messages</Str>
+      <Str sr="arg1" ve="3"/>
+      <Str sr="arg2" ve="3"/>
+    </Event>
   </Profile>
 </TaskerData>

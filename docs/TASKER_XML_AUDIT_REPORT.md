@@ -1,10 +1,10 @@
 # Tasker XML 审计与修复报告
 
-版本: v1.0 | 日期: 2026-08-09 | 目标版本: Tasker 6.6.20
+版本: v1.1 | 日期: 2026-08-09 (第二次审计) | 目标版本: Tasker 6.6.20
 
 ## 审计概要
 
-对项目中全部 18 个 Tasker 相关 XML 文件进行了全面审查，涵盖语法规范性、版本兼容性、逻辑正确性和导入兼容性四个维度。共识别出 3 类 16 处问题，全部已修复。此次审计同时更新了 2 份部署文档中的 Tasker 相关章节，确保 XML 结构、版本声明和部署步骤之间的一致性。
+对项目中全部 18 个 Tasker 相关 XML 文件进行了两轮全面审查，涵盖语法规范性、版本兼容性、逻辑正确性和导入兼容性四个维度。第一轮识别出 3 类 16 处问题（tv 版本、XML 声明、尾部空白），第二轮发现 4 个致命导入错误（Action 代码错误、缺失 `<nme>`、非标准插件节点）。全部已修复。两份部署文档同步更新。
 
 ### 审计范围
 
@@ -136,6 +136,71 @@ Tasker 导入 XML 文件时应包含标准 XML 声明头，否则在部分 Andro
 2. 验证 termux_template.xml 中所有 Action code 在新版本 Tasker 中的参数映射是否正常
 3. 评估是否将 `obsidian_prj.xml` 和 `rho_prj.xml` 的 `flags="8"` 升级为 `flags="40"`
 4. 考虑为 config/tasker/ 文件增加 Git 属性标记以保留 UTF-8 without BOM 编码
+
+---
+
+## 第二轮审计：导入致命错误修复（2026-08-09）
+
+第一轮修复后用户报告实际导入 Tasker 仍然失败。经排查，发现以下 4 个致命错误：
+
+### 致命错误 1：JavaScriptlet Action 代码错误（4 处）
+
+| 文件 | 位置 | 修复前 | 修复后 |
+|------|------|--------|--------|
+| `atlas_trigger.prj.xml` Task 2 Action 2 | `code` | 418 | 129 |
+| `atlas_trigger.prj.xml` Task 4 Action 3 | `code` | 418 | 129 |
+| `task_wifi_toggle.tsk.xml` Action 2 | `code` | 418 | 129 |
+| `task_result_handler.tsk.xml` Action 5 | `code` | 418 | 129 |
+| `task_sim_switch.tsk.xml` Action 6 | `code` | 418 | 129 |
+
+**根因**：`code=418` 在 Tasker 官方规范中代表 "Get Calendar Events"（获取日历事件），而非 JavaScriptlet。当 Tasker 解析器在 `<code>418</code>` 内部发现 JS 代码段落时，发现其不符合日历 Action 的参数格式，直接抛出 XML 解析错误并拒绝导入。
+
+**修复**：JavaScriptlet 的正确 Action 代码是 `code=129`（Tasker 6.x 官方规范），已全部替换。
+
+### 致命错误 2：Task 缺少 `<nme>` 名称节点（4 处）
+
+| 文件 | Task ID | 新增 |
+|------|---------|------|
+| `atlas_trigger.prj.xml` | 2001 | `<nme>ATLAS: SIM切换</nme>` |
+| `atlas_trigger.prj.xml` | 2002 | `<nme>ATLAS: WiFi切换</nme>` |
+| `atlas_trigger.prj.xml` | 2003 | `<nme>ATLAS: 通用触发</nme>` |
+| `atlas_trigger.prj.xml` | 2004 | `<nme>ATLAS: 结果处理</nme>` |
+
+**根因**：在 `<Project>` 的 `<tids>` 列表中通过 ID 引用的 Task 必须包含 `<nme>` 节点。匿名 Task 仅在直接被 Profile 通过 `<mid>` 关联时可用。导入器在项目完整性校验时发现 Task 2001-2004 缺失名称，判定 Project XML 无效。
+
+### 致命错误 3：plugin.EB 非标准插件节点（2 处）
+
+| 文件 | 修复前 Context | 修复后 Context |
+|------|---------------|---------------|
+| `atlas_trigger.prj.xml` Profile 2 | `<plugin.EB state="2" sr="con0" ve="2">` + `code=200` | `<Event sr="con0" ve="2">` + `code=222` |
+| `profile_event.xml` | `<plugin.EB state="2" sr="con0" ve="2">` + `code=200` | `<Event sr="con0" ve="2">` + `code=222` |
+
+**根因**：`plugin.EB` 是某些第三方插件（如 AutoNotification）通过 Tasker 内部序列化产生的标签。手动手写或以非 Tasker 导出方式生成的 `plugin.EB` 节点，其内部 Bundle key 约定和命名空间与 Tasker 标准 XML 导入器不兼容，导致 Context 类型无法识别。
+
+**修复**：替换为 Tasker 原生 `<Event>` 上下文，使用 `code=222`（Notification — Notification posted）。`arg0` 设置为 `Messages`（默认监听应用），用户导入后可在 Tasker UI 中自行修改过滤参数。如需更复杂的 AutoNotification 过滤能力，建议在导入后通过 Tasker UI 手动配置 AutoNotification 插件事件上下文，而非手写 XML。
+
+### 第二次审计修复统计
+
+| 指标 | 数值 |
+|------|------|
+| Action code 418→129 (JavaScriptlet) | 5 处 |
+| 补充 `<nme>` 节点 | 4 处 |
+| plugin.EB→Event(code=222) | 2 处 |
+| 涉及文件 | 5 个（4 个 .tsk.xml + 1 个 .prj.xml + 1 个 profile_event.xml） |
+| 项目文件版本号更新 | v2.0 → v2.1 |
+
+### 累计修复统计（两轮合计）
+
+| 指标 | 数值 |
+|------|------|
+| tv 版本升级 | 11 处 |
+| XML 声明补充 | 3 处 |
+| 尾部空白清理 | 1 处 |
+| Action code 修复 | 5 处 |
+| 补充 `<nme>` 节点 | 4 处 |
+| plugin.EB→Event | 2 处 |
+| 文档更新 | 2 份（第二轮再次更新） |
+| **合计修复点** | **26 处** |
 
 ---
 

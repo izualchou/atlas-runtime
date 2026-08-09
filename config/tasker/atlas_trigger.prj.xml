@@ -2,11 +2,11 @@
 <TaskerData version="1.0" tv="6.6.20" dvi="1" rvi="1">
   <!-- ================================================================
        Atlas Trigger — Tasker 项目文件
-       版本: v2.0 (修复版)
+       版本: v2.1 (第二次审计修复)
        说明: 聚合所有 Atlas Runtime 的 Profile 和 Task，
              可使用 Tasker 的 "导入项目" 功能直接导入。
-       依赖: Termux:Tasker 插件、AutoNotification 插件 (可选)
-             详见项目 REAMDE 及 docs/ 目录下的部署指南。
+       依赖: Termux:Tasker 插件 (com.termux.tasker)
+       修复: v2.0→v2.1: code 418→129 (JavaScriptlet), plugin.EB→Event(code=222), 补全 <nme>
   ================================================================ -->
 
   <!-- ================================================================
@@ -49,23 +49,17 @@
     <mid0>2003</mid0>
     <nme>ATLAS: 事件-通知触发</nme>
     <!-- 
-      AutoNotification Intercept — 监听指定应用的推送通知
-      依赖: AutoNotification 插件 (com.joaomgcd.autonotification)
-      原生替代: 可用 Tasker 内置 Event → Notification (限制较多)
-      plugin.EB 是 Tasker 对 Event Behaviour 插件的标准XML节点，
-      state="2" 表示事件响应型插件，这是 Tasker 原生支持的格式。
+      使用 Tasker 原生 Notification 事件 (code=222)
+      替代 AutoNotification 插件的 plugin.EB 节点（非标准 XML，会导致导入失败）
+      导入后可在 Tasker UI 中手动配置 App 和文本过滤器
     -->
-    <plugin.EB state="2" sr="con0" ve="2">
-      <code>200</code>
-      <Bundle sr="arg0">
-        <key>NotificationApp</key>
-        <value>Messages,SMS</value>
-        <key>NotificationTextFilter</key>
-        <value></value>
-      </Bundle>
-      <Str sr="arg0" ve="3">com.joaomgcd.autonotification</Str>
-      <Str sr="arg1" ve="3">AutoNotification Intercept</Str>
-    </plugin.EB>
+    <Event sr="con0" ve="2">
+      <code>222</code>
+      <pri>0</pri>
+      <Str sr="arg0" ve="3">Messages</Str>
+      <Str sr="arg1" ve="3"/>
+      <Str sr="arg2" ve="3"/>
+    </Event>
   </Profile>
 
   <!-- ================================================================
@@ -94,6 +88,7 @@
     <cdate>1723104000000</cdate>
     <edate>1723104000000</edate>
     <id>2001</id>
+    <nme>ATLAS: SIM切换</nme>
     <pri>10</pri>
     <rty>1</rty>
 
@@ -169,6 +164,7 @@
     <cdate>1723104000000</cdate>
     <edate>1723104000000</edate>
     <id>2002</id>
+    <nme>ATLAS: WiFi切换</nme>
     <pri>8</pri>
     <rty>1</rty>
 
@@ -186,8 +182,9 @@
 
     <!-- Action 2: JavaScriptlet — 计算 Wi-Fi 切换目标状态 -->
     <!-- Tasker 内置变量 %WIFI 为 "off" 或 "on"，将其取反生成 JSON -->
+    <!-- code=129 = JavaScriptlet (Tasker v6.6.20) -->
     <Action sr="act1" ve="7">
-      <code>418</code>
+      <code>129</code>
       <Str sr="arg0" ve="3">var enable = global("WIFI") !== "on";
 setLocal("wifi_action", JSON.stringify({action:"wifi_toggle",params:{enable:enable},correlation_id:"tasker_wifi_"+global("TIMES")}));</Str>
       <Int sr="arg1" val="30"/>
@@ -244,6 +241,7 @@ setLocal("wifi_action", JSON.stringify({action:"wifi_toggle",params:{enable:enab
     <cdate>1723104000000</cdate>
     <edate>1723104000000</edate>
     <id>2003</id>
+    <nme>ATLAS: 通用触发</nme>
     <pri>5</pri>
     <rty>1</rty>
 
@@ -303,6 +301,7 @@ setLocal("wifi_action", JSON.stringify({action:"wifi_toggle",params:{enable:enab
     <cdate>1723104000000</cdate>
     <edate>1723104000000</edate>
     <id>2004</id>
+    <nme>ATLAS: 结果处理</nme>
     <pri>5</pri>
     <rty>0</rty>
 
@@ -326,14 +325,10 @@ setLocal("wifi_action", JSON.stringify({action:"wifi_toggle",params:{enable:enab
     </Action>
 
     <!-- Action 3: JavaScriptlet — 解析 JSON 提取 status 字段 -->
-    <!-- 
-      原 code=413 是"请求添加快捷图块"的 Action，不可用于 JSON 解析。
-      修正为 code=418 (JavaScriptlet)，这是 Tasker 原生支持的
-      JavaScript 执行动作，通过 JSON.parse() 正确提取字段。
-      JavaScriptlet 中的 local() 读取本地变量，setLocal() 写入本地变量。
-    -->
+    <!-- code=129 = JavaScriptlet (Tasker v6.6.20, code=418 was Calendar Events) -->
+    <!-- local() 读取本地变量，setLocal() 写入本地变量 -->
     <Action sr="act2" ve="7">
-      <code>418</code>
+      <code>129</code>
       <Str sr="arg0" ve="3">try { var r = JSON.parse(local("result_content")); setLocal("task_status", r.status || "unknown"); } catch(e) { setLocal("task_status", "parse_error"); }</Str>
       <Int sr="arg1" val="30"/>
     </Action>

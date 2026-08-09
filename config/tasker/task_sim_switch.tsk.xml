@@ -77,10 +77,10 @@
       </ConditionList>
     </Action>
 
-    <!-- Action 6: JavaScriptlet — 解析 JSON 提取 status (code=418) -->
-    <!-- 原 code=413 为"请求添加快捷图块"功能，不可用于 JSON 解析 -->
+    <!-- Action 6: JavaScriptlet — 解析 JSON 提取 status -->
+    <!-- code=129 = JavaScriptlet (Tasker v6.6.20, was 418 Calendar Events) -->
     <Action sr="act5" ve="7">
-      <code>418</code>
+      <code>129</code>
       <Str sr="arg0" ve="3">try { var r = JSON.parse(local("result_raw")); setLocal("task_status", r.status || "unknown"); } catch(e) { setLocal("task_status", "parse_error"); }</Str>
       <Int sr="arg1" val="30"/>
     </Action>
