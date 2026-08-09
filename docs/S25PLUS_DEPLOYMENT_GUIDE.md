@@ -192,7 +192,7 @@ Samsung S25 Plus 设备已完成初始设置向导、已连接到 Wi-Fi 网络�
 预期结果: Tasker 的通知监听权限为"已授权"。在 Tasker 应用的偏好设置中，通知监听状态应显示为"活跃"。
 
 异常处理:
-- 若 Tasker 不在通知使用权列表中：确保已在 Google Play 安装最新版 Tasker（v5.15+）。重启设备后重新检查。
+- 若 Tasker 不在通知使用权列表中：确保已在 Google Play 安装最新版 Tasker（v6.6+，推荐 v6.6.20）。重启设备后重新检查。
 - 若开启后提示"此权限可能影响隐私"：此为标准系统提示，Tasker 使用此权限仅用于读取 SMS/Messages 通知内容以触发自动化 Profile。确认开启。
 
 ### 步骤 13：授予 Termux 存储访问权限
@@ -553,10 +553,11 @@ cp ~/atlas-runtime/config/tasker/atlas_trigger.prj.xml /sdcard/atlas_shared/
 
 然后在 Tasker 文件选择器中导航至 `/sdcard/atlas_shared/atlas_trigger.prj.xml`。
 
-预期结果: 项目 "Atlas Trigger" 出现在 Tasker 的 Profiles/Tasks 列表中。项目包含 3 个 Profile（定时触发、事件触发、状态触发）和 4 个 Task（SIM 切换、WiFi 切换、通用触发、结果处理）。
+预期结果: 项目 "Atlas Trigger" 出现在 Tasker 的 Profiles/Tasks 列表中。项目包含 3 个 Profile（定时触发、事件触发、状态触发）和 4 个 Task（SIM 切换、WiFi 切换、通用触发、结果处理）。所有 XML 文件的 `tv` 版本属性均为 `"6.6.20"`，与 Tasker v6.6.20 完全兼容。
 
 异常处理:
-- 若 Tasker 提示"文件格式错误"：确认文件为 `.prj.xml` 格式（非 `.tsk.xml` 单任务文件）。检查文件完整性——在 Termux 中执行 `wc -l ~/atlas-runtime/config/tasker/atlas_trigger.prj.xml`，文件应不少于 50 行。
+- 若 Tasker 提示"不支持的版本"：说明 Tasker 版本过低。所有 XML 文件使用 `tv="6.6.20"` 格式，需 Tasker 6.6.20 或更高版本。请从 Google Play 更新 Tasker 至最新版后重试。
+- 若 Tasker 提示"文件格式错误"：确认文件为 `.prj.xml` 格式（非 `.tsk.xml` 单任务文件）。检查文件完整性——在 Termux 中执行 `wc -l ~/atlas-runtime/config/tasker/atlas_trigger.prj.xml`，文件应不少于 50 行。另外确认文件编码为 UTF-8 without BOM（在 Termux 中执行 `file ~/atlas-runtime/config/tasker/atlas_trigger.prj.xml` 验证）。
 - 若导入后 Profiles 显示为灰色（未激活）：点击 Profile 名称旁的开关图标手动激活。部分 Profile 需要额外权限（如通知监听）才能激活。
 - 若 Tasker 列表中出现重复项目：长按旧项目 → 删除，保留最新导入的版本。
 

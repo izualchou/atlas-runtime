@@ -1,4 +1,7 @@
-﻿<TaskerData sr="" dvi="1" tv="5.11.7.beta">
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- WARNING: This template originates from Tasker 5.11.7.beta and was auto-migrated to v6.6.20.
+     Verify all Action codes and parameters against the current Tasker version before use. -->
+<TaskerData sr="" dvi="1" tv="6.6.20">
 	<Task sr="task978">
 		<cdate>1604448827988</cdate>
 		<edate>1607249956160</edate>

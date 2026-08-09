@@ -1,4 +1,5 @@
-﻿<TaskerData sr="" dvi="1" tv="6.3.13">
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TaskerData sr="" dvi="1" tv="6.6.20">
 	<dmetric>1080.0,2400.0</dmetric>
 	<Profile sr="prof465" ve="2">
 		<cdate>1703250773819</cdate>
