@@ -2,8 +2,8 @@
 <TaskerData version="1.0" tv="5.15.0" dvi="1" rvi="1">
   <!-- ================================================================
        Task: ATLAS: 结果处理
-       版本: v1.1
-       步骤数: 8
+       版本: v2.0
+       步骤数: 7
        说明: 从 Atlas Runtime 共享目录读取 last_result.json，
              解析任务状态并向用户展示通知。包含错误处理和超时保护。
        依赖: result_callback.py (写入 last_result.json)
@@ -56,24 +56,17 @@
       <Int sr="arg3" val="0"/>
     </Action>
 
-    <!-- Action 5: JavaScriptlet — 解析 JSON 提取 status 和 task_id -->
+    <!-- Action 5: JavaScriptlet — 解析 JSON 提取 status 和 task_id (code=418) -->
+    <!-- 原两个 code=413 均为"请求添加快捷图块"功能，不可用于 JSON 解析。
+         合并为单个 JavaScriptlet，一次性提取所有字段。 -->
     <Action sr="act4" ve="7">
-      <code>413</code>
-      <Str sr="arg0" ve="3">%result_content</Str>
-      <Str sr="arg1" ve="3">status</Str>
-      <Str sr="arg2" ve="3">%task_status</Str>
+      <code>418</code>
+      <Str sr="arg0" ve="3">try { var r = JSON.parse(local("result_content")); setLocal("task_status", r.status || "unknown"); setLocal("task_id", r.task_id || "N/A"); } catch(e) { setLocal("task_status", "parse_error"); setLocal("task_id", "N/A"); }</Str>
+      <Int sr="arg1" val="30"/>
     </Action>
 
-    <!-- Action 6: JavaScriptlet — 解析 task_id -->
+    <!-- Action 6: Notify — 显示结果 -->
     <Action sr="act5" ve="7">
-      <code>413</code>
-      <Str sr="arg0" ve="3">%result_content</Str>
-      <Str sr="arg1" ve="3">task_id</Str>
-      <Str sr="arg2" ve="3">%task_id</Str>
-    </Action>
-
-    <!-- Action 7: Notify — 显示结果 -->
-    <Action sr="act6" ve="7">
       <code>523</code>
       <Str sr="arg0" ve="3">Atlas: 任务结果</Str>
       <Str sr="arg1" ve="3">任务: %task_id
@@ -87,8 +80,8 @@
       <Int sr="arg8" val="0"/>
     </Action>
 
-    <!-- Action 8: End If -->
-    <Action sr="act7" ve="7">
+    <!-- Action 7: End If -->
+    <Action sr="act6" ve="7">
       <code>38</code>
     </Action>
   </Task>

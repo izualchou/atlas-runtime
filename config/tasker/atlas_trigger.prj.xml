@@ -2,10 +2,11 @@
 <TaskerData version="1.0" tv="5.15.0" dvi="1" rvi="1">
   <!-- ================================================================
        Atlas Trigger — Tasker 项目文件
-       版本: v1.0
+       版本: v2.0 (修复版)
        说明: 聚合所有 Atlas Runtime 的 Profile 和 Task，
              可使用 Tasker 的 "导入项目" 功能直接导入。
-       依赖: Termux:Tasker 插件、trigger_atlas.sh 脚本
+       依赖: Termux:Tasker 插件、AutoNotification 插件 (可选)
+             详见项目 REAMDE 及 docs/ 目录下的部署指南。
   ================================================================ -->
 
   <!-- ================================================================
@@ -14,8 +15,8 @@
   <Project sr="proj0" ve="2">
     <cdate>1723104000000</cdate>
     <name>Atlas Trigger</name>
-    <pids>prof_time,prof_event,prof_state</pids>
-    <tids>task_sim_switch,task_wifi_toggle,task_trigger_universal,task_result_handler</tids>
+    <pids>1001,1002,1003</pids>
+    <tids>2001,2002,2003,2004</tids>
     <desc>Atlas Runtime 自动化触发项目 — 管理 SIM 切换、WiFi 控制、通用触发和结果通知</desc>
   </Project>
 
@@ -27,13 +28,13 @@
     <edate>1723104000000</edate>
     <id>1001</id>
     <flags>8</flags>
-    <mid0>1001</mid0>
+    <mid0>2001</mid0>
     <nme>ATLAS: 定时SIM切换 08:55</nme>
     <Time sr="con0" ve="2">
-      <code>100</code>
-      <Repeat>0</Repeat>
-      <From>535</From>
-      <To>535</To>
+      <fh>8</fh>
+      <fm>55</fm>
+      <th>8</th>
+      <tm>55</tm>
     </Time>
   </Profile>
 
@@ -45,16 +46,25 @@
     <edate>1723104000000</edate>
     <id>1002</id>
     <flags>8</flags>
-    <mid0>1002</mid0>
+    <mid0>2003</mid0>
     <nme>ATLAS: 事件-通知触发</nme>
+    <!-- 
+      AutoNotification Intercept — 监听指定应用的推送通知
+      依赖: AutoNotification 插件 (com.joaomgcd.autonotification)
+      原生替代: 可用 Tasker 内置 Event → Notification (限制较多)
+      plugin.EB 是 Tasker 对 Event Behaviour 插件的标准XML节点，
+      state="2" 表示事件响应型插件，这是 Tasker 原生支持的格式。
+    -->
     <plugin.EB state="2" sr="con0" ve="2">
       <code>200</code>
-      <Bundle>
+      <Bundle sr="arg0">
         <key>NotificationApp</key>
         <value>Messages,SMS</value>
+        <key>NotificationTextFilter</key>
+        <value></value>
       </Bundle>
-      <Str sr="arg0" ve="3">com.joaomgcd.autoinput</Str>
-      <Str sr="arg1" ve="3">AutoInput Event</Str>
+      <Str sr="arg0" ve="3">com.joaomgcd.autonotification</Str>
+      <Str sr="arg1" ve="3">AutoNotification Intercept</Str>
     </plugin.EB>
   </Profile>
 
@@ -66,13 +76,13 @@
     <edate>1723104000000</edate>
     <id>1003</id>
     <flags>8</flags>
-    <mid0>1003</mid0>
+    <mid0>2002</mid0>
     <nme>ATLAS: 状态-电量低于20%</nme>
-    <BattLevel sr="con0" ve="2">
-      <code>300</code>
-      <from>0</from>
-      <to>20</to>
-    </BattLevel>
+    <State sr="con0" ve="2">
+      <code>140</code>
+      <Int sr="arg0" val="0"/>
+      <Int sr="arg1" val="20"/>
+    </State>
   </Profile>
 
   <!-- ================================================================
@@ -307,12 +317,17 @@
       <Int sr="arg3" val="0"/>
     </Action>
 
-    <!-- Action 3: If set, parse status from JSON -->
+    <!-- Action 3: JavaScriptlet — 解析 JSON 提取 status 字段 -->
+    <!-- 
+      原 code=413 是"请求添加快捷图块"的 Action，不可用于 JSON 解析。
+      修正为 code=418 (JavaScriptlet)，这是 Tasker 原生支持的
+      JavaScript 执行动作，通过 JSON.parse() 正确提取字段。
+      JavaScriptlet 中的 local() 读取本地变量，setLocal() 写入本地变量。
+    -->
     <Action sr="act2" ve="7">
-      <code>413</code>
-      <Str sr="arg0" ve="3">%result_content</Str>
-      <Str sr="arg1" ve="3">status</Str>
-      <Str sr="arg2" ve="3">%task_status</Str>
+      <code>418</code>
+      <Str sr="arg0" ve="3">try { var r = JSON.parse(local("result_content")); setLocal("task_status", r.status || "unknown"); } catch(e) { setLocal("task_status", "parse_error"); }</Str>
+      <Int sr="arg1" val="30"/>
     </Action>
 
     <!-- Action 4: Notify with status -->

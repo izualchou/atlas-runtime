@@ -74,12 +74,12 @@
       <Int sr="arg3" val="0"/>
     </Action>
 
-    <!-- Action 6: JavaScriptlet (if result exists) — 解析 JSON status -->
+    <!-- Action 6: JavaScriptlet — 解析 JSON 提取 status (code=418) -->
+    <!-- 原 code=413 为"请求添加快捷图块"功能，不可用于 JSON 解析 -->
     <Action sr="act5" ve="7">
-      <code>413</code>
-      <Str sr="arg0" ve="3">%result_raw</Str>
-      <Str sr="arg1" ve="3">status</Str>
-      <Str sr="arg2" ve="3">%task_status</Str>
+      <code>418</code>
+      <Str sr="arg0" ve="3">try { var r = JSON.parse(local("result_raw")); setLocal("task_status", r.status || "unknown"); } catch(e) { setLocal("task_status", "parse_error"); }</Str>
+      <Int sr="arg1" val="30"/>
     </Action>
 
     <!-- Action 7: Notify — 显示结果通知 -->
