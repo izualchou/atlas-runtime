@@ -202,29 +202,33 @@ SUPERVISE_DIR="$SERVICE_DIR/supervise"
 
 mkdir -p "$SERVICE_DIR"
 mkdir -p "$LOG_DIR"
-mkdir -p "$SUPERVISE_DIR"
 
-# 预创建 supervise/ok 文件 — runit 要求此文件存在才能启动服务
-# 在实际运行中 runsv 会自动更新此文件，但首次部署时必须手动创建
-if [ ! -f "$SUPERVISE_DIR/ok" ]; then
-    touch "$SUPERVISE_DIR/ok"
-fi
-if [ ! -f "$SUPERVISE_DIR/control" ]; then
-    touch "$SUPERVISE_DIR/control"
-fi
-if [ ! -f "$SUPERVISE_DIR/status" ]; then
-    touch "$SUPERVISE_DIR/status"
-fi
-print_info "supervise 目录已初始化: $SUPERVISE_DIR"
+# ============================================================
+# CRITICAL: 不要手动创建 supervise/ 目录或其内部文件！
+# ============================================================
+# runit 的 supervise/ 由 runsv 进程独家管理，文件类型有严格限制：
+#   supervise/control  — 必须是 FIFO (命名管道)，由 runsv 调用 mkfifo 创建
+#   supervise/status   — 二进制格式状态文件，由 runsv 写入特定字节序列
+#   supervise/ok       — 哨兵文件，runsv 启动就绪后创建
+#   supervise/lock     — 锁文件
+#
+# 使用 touch 创建的普通空文件会导致:
+#   - supervise/status  → "bad format" 错误（二进制结构缺失）
+#   - supervise/control → sv 命令无法与 runsv 通信（FIFO 变为普通文件）
+#
+# 正确做法：删除残留 supervise/ 目录，由 runsv 在 sv-enable 后自动创建。
+# ============================================================
 
-# 创建 log/supervise 目录（runit 日志管线）
-mkdir -p "$LOG_DIR/supervise"
-if [ ! -f "$LOG_DIR/supervise/ok" ]; then
-    touch "$LOG_DIR/supervise/ok"
+# 清理可能因上次非正常退出遗留的 supervise 目录（含所有文件类型错误的内容）
+if [ -d "$SUPERVISE_DIR" ]; then
+    print_warn "检测到残留 supervise/ 目录，正在清理..."
+    rm -rf "$SUPERVISE_DIR"
 fi
-if [ ! -f "$LOG_DIR/supervise/control" ]; then
-    touch "$LOG_DIR/supervise/control"
+if [ -d "$LOG_DIR/supervise" ]; then
+    rm -rf "$LOG_DIR/supervise"
 fi
+
+print_info "服务目录已就绪（supervise/ 将由 runsv 自动创建）"
 
 # 创建 run 脚本（含 Samsung One UI 8.5 特定优化）
 cat > "$SERVICE_DIR/run" << 'RUN_EOF'
@@ -387,50 +391,77 @@ echo ""
 # ============================================================
 print_step "启动 Atlas Runtime 服务..."
 
-# 先确认 supervise 目录结构完整（防止首次部署后 rmdir 等情况）
+# ============================================================
+# 服务启动前序检查与清理
+# ============================================================
+
 SUPERVISE_DIR="$SERVICE_DIR/supervise"
 LOG_SUPERVISE_DIR="$LOG_DIR/supervise"
 
-for _dir in "$SUPERVISE_DIR" "$LOG_SUPERVISE_DIR"; do
-    if [ ! -d "$_dir" ]; then
-        print_warn "$_dir 不存在，正在重建..."
-        mkdir -p "$_dir"
-        touch "$_dir/ok"
-        touch "$_dir/control"
-        touch "$_dir/status" 2>/dev/null || true
+# 1. 确认 runsvdir 主进程存活
+if ! pgrep -f "runsvdir" > /dev/null 2>&1; then
+    print_warn "runsvdir 主进程未运行，尝试启动..."
+    if [ -f "$PREFIX/etc/profile.d/start-services.sh" ]; then
+        . "$PREFIX/etc/profile.d/start-services.sh" 2>/dev/null || true
+        sleep 1
     fi
-    if [ ! -f "$_dir/ok" ]; then
-        print_warn "supervise/ok 文件缺失，正在创建..."
-        touch "$_dir/ok"
-        touch "$_dir/control" 2>/dev/null || true
-        touch "$_dir/status" 2>/dev/null || true
+    if ! pgrep -f "runsvdir" > /dev/null 2>&1; then
+        print_error "runsvdir 仍无法启动。请重启 Termux 后重试。"
+        print_info "  exit && termux"
+        exit 1
+    fi
+    print_ok "runsvdir 已启动"
+else
+    print_info "runsvdir 主进程运行中"
+fi
+
+# 2. 清理残留 supervise 目录（由 runsv 可能已创建但损坏的）
+#    如上一步所述，supervise/ 必须由 runsv 独占管理。
+#    如果之前运行过旧版 deploy.sh，这里会残留 touch 创建的错误文件。
+for _dir in "$SUPERVISE_DIR" "$LOG_SUPERVISE_DIR"; do
+    if [ -d "$_dir" ]; then
+        print_warn "检测到残留 supervise/ 目录，正在清理..."
+        rm -rf "$_dir"
     fi
 done
 
-# 终止任何残留 runsv 进程（防止 supervise/ok: already locked 错误）
+# 3. 终止残留的 atlas-runtime runsv 进程（防止 supervise lock 冲突）
 RUNSV_PIDS=$(pgrep -f "runsv.*atlas-runtime" 2>/dev/null || true)
 if [ -n "$RUNSV_PIDS" ]; then
     print_warn "检测到残留 runsv 进程 (PIDs: $RUNSV_PIDS)，正在清理..."
     for pid in $RUNSV_PIDS; do
         kill "$pid" 2>/dev/null || true
     done
-    sleep 1
-    # 清理锁文件
-    rm -f "$SUPERVISE_DIR/lock" 2>/dev/null || true
-    rm -f "$LOG_SUPERVISE_DIR/lock" 2>/dev/null || true
-    print_ok "残留进程与锁文件已清理"
+    sleep 2
+    # 二次确认 — 如果仍存活则强制终止
+    RUNSV_PIDS2=$(pgrep -f "runsv.*atlas-runtime" 2>/dev/null || true)
+    if [ -n "$RUNSV_PIDS2" ]; then
+        for pid in $RUNSV_PIDS2; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+    # 再次清理可能刚创建的 supervise 目录
+    rm -rf "$SUPERVISE_DIR" 2>/dev/null || true
+    rm -rf "$LOG_SUPERVISE_DIR" 2>/dev/null || true
+    print_ok "残留进程已清理"
 fi
 
-# 启用服务
+# 4. 启用服务（sv-enable 创建 symlink，runsvdir 检测到后 spawn runsv）
+#    runsv 启动后自动创建 supervise/ 目录及其 FIFO/status 文件。
 sv-enable atlas-runtime 2>/dev/null || {
     print_error "sv-enable 失败。执行诊断..."
-    print_info "  → supervize 目录状态:"
-    ls -la "$SUPERVISE_DIR/" 2>/dev/null || print_error "     supervise 目录不存在!"
-    print_info "  → 可能需要重启 Termux 后重试: exit && termux"
+    print_info "  → 检查 runsvdir 进程:"
+    pgrep -la runsvdir 2>/dev/null || print_error "     runsvdir 不存在! 请重启 Termux"
+    print_info "  → 检查服务目录:"
+    ls -la "$SERVICE_DIR/" 2>/dev/null || print_error "     服务目录不存在!"
+    print_info "  → 手动修复: exit && termux (重启后 runsvdir 自动恢复)"
     exit 1
 }
 
-# 启动服务
+# 5. 短暂等待 runsv 初始化 supervise 目录
+sleep 2
+
+# 6. 启动服务
 sv up atlas-runtime 2>/dev/null || {
     print_error "sv up 失败。"
     print_info "诊断命令:"
@@ -442,14 +473,21 @@ sv up atlas-runtime 2>/dev/null || {
 
 sleep 3
 
-# 验证状态
+# 7. 验证状态
 if sv status atlas-runtime 2>/dev/null | grep -q "run:"; then
-    print_ok "✓ 服务运行中: $(sv status atlas-runtime 2>/dev/null)"
+    print_ok "服务运行中: $(sv status atlas-runtime 2>/dev/null)"
 else
     print_warn "服务状态异常，检查日志:"
     print_info "  tail -20 $LOG_DIR/current"
-    print_warn "常见原因: supervise/ok 缺失 → 已在上方自动修复，请重新运行 deploy.sh"
-    print_info "手动修复: touch $SUPERVISE_DIR/ok && sv up atlas-runtime"
+    print_info "  pgrep -la runsv                   # 检查 runsv 进程"
+    print_info "  file $SUPERVISE_DIR/control       # 应显示 'fifo (named pipe)'"
+    print_info "  file $SUPERVISE_DIR/status        # 应显示 'data'"
+    print_warn "如果 control 是 'empty' 而非 'fifo'，说明 supervise 目录被污染"
+    print_info "手动修复:"
+    print_info "  sv down atlas-runtime"
+    print_info "  sv-disable atlas-runtime"
+    print_info "  rm -rf $SUPERVISE_DIR"
+    print_info "  sv-enable atlas-runtime && sleep 2 && sv up atlas-runtime"
 fi
 
 # ============================================================
