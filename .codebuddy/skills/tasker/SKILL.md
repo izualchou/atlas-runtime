@@ -1,204 +1,152 @@
 ---
 name: tasker
-description: Tasker Android automation expert. Use this skill when users ask about creating Tasker profiles, tasks, scenes, or automating Android actions. Also use when users mention AutoApps plugins (AutoInput, AutoNotification, AutoVoice, etc.), ADB commands, or Tasker JavaScript.
-allowed-tools: Read, Write, Bash, WebFetch, Grep
+description: Tasker Android automation expert. Use this skill when users ask about creating Tasker profiles, tasks, scenes, or automating Android actions. Also use when users mention AutoApps plugins (AutoInput, AutoNotification, AutoVoice, etc.), ADB commands, or Tasker JavaScript. This skill is especially suited for generating Tasker XML configuration files that can be directly imported into Tasker app.
 ---
 
-# Tasker Android 自动化专家
+# Tasker XML Configuration & Automation Expert
 
-你是一个 Tasker（Android 平台自动化工具）的资深专家，擅长帮助用户设计、实现和调试 Tasker 自动化方案。
+This skill covers two major domains: **(1) general Tasker automation consulting** and **(2) generating import-ready XML configuration files**.
 
-## 核心能力
+## When to Use This Skill
 
-1. **Profile（配置文件）设计**：根据触发条件（时间、地点、状态、事件）设计合理的 Profile 结构
-2. **Task（任务）编写**：使用 Tasker 的 Action 构建复杂的自动化流程
-3. **Scene（场景）创建**：设计自定义 UI 界面与用户交互
-4. **插件集成**：熟练使用 AutoApps 系列插件（AutoInput、AutoNotification、AutoVoice、AutoTools 等）
-5. **JavaScript 脚本**：在 Tasker 中编写 JavaScript 实现复杂逻辑
-6. **ADB 命令**：使用 ADB 获取权限或执行高级操作
+Trigger this skill when the user mentions:
+- Tasker profiles, tasks, scenes, or projects
+- Generating Tasker XML files for import
+- Android automation workflows with Tasker
+- AutoApps plugins (AutoInput, AutoNotification, AutoVoice, etc.)
+- Tasker ADB WiFi commands
+- Tasker JavaScriptlets (JavaScript code embedded in Tasker)
+- Tasker + Termux integration via Termux:Tasker plugin
+- Tasker variable manipulation, event/state contexts, or scene UI design
 
-## 工作流程
+## Skill Architecture
 
-当用户提出 Tasker 相关需求时，请按以下步骤引导：
+This skill uses progressive disclosure:
+- **SKILL.md** (this file): Core XML generation workflow and procedural instructions
+- **references/xml-schema.md**: Complete XML structure specification (root, Project, Profile, Task, Scene)
+- **references/action-reference.md**: Action code tables, operator codes, arg type mappings
+- **references/variable-reference.md**: Variable system (global/local/built-in/array), naming conventions
+- **references/permissions.md**: Tasker permissions, ADB grant commands
+- **references/plugins.md**: Termux:Tasker and other plugin Bundle key references
+- **references/troubleshooting.md**: Common pitfalls, XML format traps, debugging guide
+- **assets/**: 5 ready-to-import example XML files
 
-### 第一步：需求分析
+## Core Workflow: Generating Tasker XML
 
-明确用户想实现什么自动化目标：
+When the user asks to generate Tasker XML configurations, follow this process:
 
-- 触发条件是什么？（时间、地点、应用打开、通知到达、摇动手机等）
-- 执行什么动作？（发送消息、调整设置、启动应用、读取通知等）
-- 是否需要用户交互？（弹出对话框、输入信息等）
+### Step 1: Understand Requirements
 
-### 第二步：方案设计
+Identify:
+- What triggers the automation? (Profile: Time, App, Event, State, Plugin)
+- What actions should execute? (Task: variables, HTTP, shell, JavaScript, notifications, etc.)
+- Is a UI needed? (Scene: text, buttons, inputs)
+- What permissions are required? (Data, Files, Notifications, Accessibility)
+- Should it be a standalone import or part of an existing project?
 
-提供清晰的技术方案：
+### Step 2: Consult Reference Files
 
-- 列出所需的 Profile 触发条件
-- 列出 Task 中的 Action 执行步骤
-- 说明需要的插件（如有）
-- 评估是否需要 Root 权限或 ADB 授权
+Before generating XML, load the relevant reference files:
+- For XML structure and element definitions: `references/xml-schema.md`
+- For action codes and parameter types: `references/action-reference.md`
+- For variable names and types: `references/variable-reference.md`
+- For permission declarations: `references/permissions.md`
+- For plugin Bundle keys: `references/plugins.md`
+- For XML gotchas: `references/troubleshooting.md`
 
-### 第三步：实施指导
+### Step 3: Generate XML
 
-- 给出逐步操作说明
-- 提供关键配置参数
-- 如有 JavaScript 代码，提供完整脚本
-- 提醒注意事项和常见坑点
+Follow these rules strictly:
 
-### 第四步：调试建议
-
-- 建议使用 Tasker 的"运行日志"（Run Log）功能排查问题
-- 建议分步测试，先测试单个 Action 再组合
-- 提醒检查权限设置
-
-## 常见场景参考
-
-### 场景一：WiFi 连接自动执行任务
-
-**Profile**：State → Net → WiFi Connected → SSID: 你的WiFi名称
-
-**Task 步骤**：
-
-1. Audio → Media Volume → Level: 7（设置音量到合适水平）
-2. Net → Mobile Data → Set: Off（关闭移动数据）
-3. Alert → Notify → Title: "已连接WiFi"
-
-```javascript
-// 也可用 JavaScript 实现更复杂的逻辑
-var wifiInfo = global("%WIFII");
-if (wifiInfo.match(/Home/)) {
-    // 在家中 WiFi，执行特定操作
-    performTask("HomeRoutine");
-}
+**Root Structure:**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<TaskerData sr="" dvi="1" tv="6.6.20">
+  <!-- Project(s) with Profiles, Tasks, Scenes -->
+</TaskerData>
 ```
 
-### 场景二：收到特定通知自动回复
+**Critical Rules:**
+- Use `tv="6.6.20"` (latest version) on all elements
+- Use `flags="40"` on Profile entries (not old `8`)
+- Action `sr` attributes: `"act0"`, `"act1"`, `"act2"`... continuous from 0
+- If conditions MUST use `<ConditionList>` format, not legacy flat format
+- Parameter tags MUST match dataType from datadef.xml: Int→`<Int>`, Str→`<Str>`, Bundle→`<Bundle>`
+- XML escape: `&`→`&amp;`, `<`→`&lt;`, `>`→`&gt;`, `"`→`&quot;`
+- Anonymous tasks (linked via `<mid0>` in Profile) must NOT have `<nme>`
 
-**Profile**：Event → UI → Notification → 应用: 微信, 标题包含: 关键词
-
-**Task 步骤**：
-
-1. Plugin → AutoNotification → Query（获取通知内容）
-2. Code → JavaScriptlet（解析内容并生成回复）
-3. Plugin → AutoNotification → Reply（自动回复）
-
-```javascript
-// JavaScript 解析通知内容
-var title = global("ANTITLE");
-var text = global("ANTEXT");
-
-if (text.indexOf("在吗") >= 0) {
-    setLocal("reply_msg", "您好，我现在不在，稍后回复您。");
-} else if (text.indexOf("验证码") >= 0) {
-    var code = text.match(/\d{4,6}/);
-    if (code) {
-        setLocal("reply_msg", "验证码: " + code[0]);
-    }
-}
+**Project `Share` settings:**
+```xml
+<Share sr="Share">
+  <b>false</b>           <!-- true = standalone import, false = part of project -->
+  <d>Description</d>
+  <g>Data,Files</g>       <!-- comma-separated: Data,Files,Notifications,Accessibility -->
+  <p>true</p>              <!-- allow external access -->
+  <t>tags,comma,separated</t>
+</Share>
 ```
 
-### 场景三：定时执行 JavaScript
+**Profile Types:**
 
-**Profile**：Time → 每天 08:00
+| Type | XML Element | Usage |
+|------|------------|-------|
+| Time | `<Time sr="con0">` | Clock-based triggers with hour/min/day/month constraints |
+| App | `<App sr="con0">` | App foreground events, up to 5 packages |
+| Event | `<Event sr="con0">` | System events (Boot, Notification, Intent, etc.) |
+| State | `<State sr="con0">` | Persistent conditions (WiFi, Power, Variable Value) |
+| Plugin | Plugin element | External plugin conditions (Termux, AutoApps) |
 
-**Task 步骤**：
+Each Profile links to tasks via `<mid0>` (enter task) and `<mid1>` (exit task).
 
-1. Code → JavaScriptlet（执行自动化脚本）
-2. Net → HTTP Request（可配合调用 API）
+### Step 4: Format Output
 
-```javascript
-// 定时任务 JavaScript 示例
-var today = new Date();
-var dateStr = today.getFullYear() + "-" + 
-              (today.getMonth() + 1) + "-" + 
-              today.getDate();
+Always present XML in two forms:
+1. **Code block** with complete XML for copy-paste
+2. **File path suggestion**: `[name].prj.xml` → copy to `/sdcard/Tasker/configs/user/` (standalone) or `/sdcard/Tasker/projects/` (project)
 
-// 调用 HTTP API
-var http = new XMLHttpRequest();
-http.open("GET", "https://api.example.com/daily?date=" + dateStr, false);
-http.send();
+Include a summary table showing the structure:
+- Project name and tags
+- Profile(s): trigger type and conditions
+- Task(s): summary of actions
+- Scene(s): layout description (if any)
+- Required permissions
 
-if (http.status == 200) {
-    var data = JSON.parse(http.responseText);
-    flash("今日数据已获取: " + data.summary);
-}
+### Step 5: Provide Import Instructions
+
+```
+1. Copy the XML to /sdcard/Tasker/configs/user/[name].prj.xml
+2. In Tasker: long-press "Profiles" tab → Import → select file
+3. Or: Tasker → menu → Import Project
+4. Grant any missing permissions when prompted
+5. Test the Task individually before enabling the Profile
 ```
 
-## Tasker 常用 Action 参考
+## Consulting Mode (Non-XML Questions)
 
-| Action 类别 | 常用操作 | 说明 |
-|:---|:---|:---|
-| 网络 | WiFi 开关、移动数据开关、飞行模式 | 控制网络连接状态 |
-| 音频 | 音量设置、媒体控制、铃声模式 | 管理系统音频输出 |
-| 显示 | 屏幕亮度、自动旋转、夜间模式 | 调整显示参数 |
-| 应用 | 启动应用、卸载应用、获取应用信息 | 管理应用程序 |
-| 文件 | 读写文件、目录操作、文件复制 | 操作设备存储 |
-| 变量 | 变量赋值、变量拆分、变量转换 | 处理运行时数据 |
-| 流程控制 | If/Else、For 循环、Goto、停止任务 | 控制任务执行逻辑 |
-| 通知 | 发送通知、取消通知、通知亮屏 | 通知栏交互 |
-| 输入 | 文字输入、点击、滑动 | 需 AutoInput 插件 |
-| 系统 | 重启、关机、截图、锁屏 | 高级系统操作 |
+When users ask general Tasker questions without requesting XML generation:
 
-## 插件速查
+- Explain Tasker concepts: Profiles (contexts), Tasks (actions), Scenes (UI), Variables
+- Describe available actions, contexts, and plugins
+- Suggest automation approaches with reasoning
+- Reference official Tasker docs when appropriate
+- Mention ADB WiFi for advanced permissions
 
-- **AutoInput**：模拟点击、滑动、文字输入，自动化 UI 操作
-- **AutoNotification**：拦截和发送通知，提取通知内容
-- **AutoVoice**：语音识别和语音合成
-- **AutoTools**：通用工具集（JSON 解析、WebSocket、屏幕截图等）
-- **AutoShare**：分享菜单集成
+## Key Constraints
 
-## Tasker JavaScript 常用模板
+1. ALL XML MUST use `tv="6.6.20"` attribute
+2. NEVER use legacy flat If format — always `<ConditionList>`
+3. Anonymous tasks (profile-linked) must NOT have `<nme>`
+4. Action `sr` must be sequential from 0
+5. Parameter types must match datadef.xml definitions exactly
+6. Always specify `<Share>` with appropriate permission groups
+7. Termux:Tasker Bundle keys use `com.termux.tasker.` prefix
+8. For standalone imports, set `<b>true</b>` in Share
 
-### 全局变量读写
+## Example Assets
 
-```javascript
-// 读取全局变量
-var myVar = global("MyVariable");
-
-// 设置全局变量
-setGlobal("MyVariable", "new_value");
-
-// 读取局部变量（Task 内有效）
-var localVar = local("temp_value");
-```
-
-### HTTP 请求
-
-```javascript
-var http = new XMLHttpRequest();
-http.open("POST", "https://api.example.com/endpoint", false);
-http.setRequestHeader("Content-Type", "application/json");
-http.send(JSON.stringify({ key: "value" }));
-
-if (http.status == 200) {
-    var result = JSON.parse(http.responseText);
-    flash("请求成功: " + result.message);
-} else {
-    flash("请求失败: " + http.status);
-}
-```
-
-### 文件操作
-
-```javascript
-// 读取文件
-var content = readFile("/sdcard/Tasker/data.txt");
-flash("文件内容: " + content);
-
-// 写入文件
-writeFile("/sdcard/Tasker/output.txt", "写入的内容", false);
-```
-
-## 输出规范
-
-- 所有 Tasker 配置用步骤列表清晰展示
-- 关键参数用代码块或 **粗体** 标注
-- JavaScript 脚本提供完整、可直接复制的代码
-- 涉及 ADB 命令时，注明是否需要 Root 及安全警告
-
-## 注意事项
-
-1. **权限提醒**：Android 高版本需要开启"无障碍服务"或"通知读取权限"
-2. **电池优化**：提醒用户将 Tasker 加入电池优化白名单
-3. **兼容性**：不同 Android 版本 API 可能有差异
-4. **备份建议**：提醒用户定期导出配置文件备份
+The `assets/` directory contains 5 complete, import-ready XML examples:
+1. `system-monitor.prj.xml` — Hourly battery check + notification + logging
+2. `wifi-manager.prf.xml` — WiFi connect/disconnect → mobile data toggle
+3. `http-api-caller.prj.xml` — Weather API call → JSON parse → notification
+4. `scene-panel.prj.xml` — Custom system status overlay with refresh/close
+5. `termux-python.prj.xml` — Termux:Tasker → Python script execution
